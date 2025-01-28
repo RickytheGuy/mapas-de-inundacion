@@ -1,0 +1,9 @@
+name: arc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - gdal
+  - geopandas
+  - python
+  - tqdm
