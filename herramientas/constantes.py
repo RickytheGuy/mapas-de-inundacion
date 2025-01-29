@@ -8,3 +8,6 @@ FABDEM_BASE_URL = "https://data.bris.ac.uk/datasets/s5hqmjcdj8yo2ibzi9b4ew3sn/"
 
 VPU_BOUNDARIES_URL = "s3://geoglows-v2/streams-global/vpu-boundaries.gpkg"
 STREAMLINES_BASE_URL = "s3://rfs-v2/hydrography/"
+
+ESA_BASE_URL = "https://esa-worldcover.s3.eu-central-1.amazonaws.com"
+

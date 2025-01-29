@@ -373,3 +373,64 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     for _pass in passes:
         logging.info(f"{ordinal(passes.index(_pass) + 1)} pass removed {_pass} cells") 
     
+def download_land_use(minx: float,
+                      miny: float,
+                      maxx: float,
+                      maxy: float,
+                      output_dir: str,) -> list[str]:
+    """
+    Inspired by Mike Follum
+    """
+    if not output_dir:
+        logging.error(f"Please provide an output directory")
+        return
+    if minx >= maxx or miny >= maxy:
+        logging.error("Invalid bounding box")
+        return
+    
+    # Get the tiles that intersect with the bounding box
+    esa_tiles_file = os.path.join(c.CACHE_DIR, "esa_worldcover_tiles.gpkg")
+    if os.path.exists(esa_tiles_file):
+        esa_df: gpd.GeoDataFrame = gpd.read_file(esa_tiles_file)
+    else:
+        logging.info("Downloading ESA Worldcover tiles...")
+        esa_df: gpd.GeoDataFrame = gpd.read_file(f"{c.ESA_BASE_URL}/esa_worldcover_grid.geojson")
+        esa_df.to_file(esa_tiles_file)
+
+    bbox = box(minx, miny, maxx, maxy)
+    intersecting_tiles = esa_df[esa_df.intersects(bbox)]
+
+    if intersecting_tiles.empty:
+        logging.error("No ESA Worldcover tiles intersect with the bounding box")
+        return
+    
+    if output_dir:
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+    else:
+        output_dir = c.CACHE_DIR
+
+    # Download the tiles
+    max_threads = min(os.cpu_count(), len(intersecting_tiles))
+    with ThreadPoolExecutor(max_threads) as executor:
+        file_paths = executor.map(_download_esa_tile, intersecting_tiles['ll_tile'].tolist(), [output_dir] * len(intersecting_tiles))
+
+    return list(file_paths)
+
+def _download_esa_tile(tile: str, 
+                      output_dir: str = None) -> str:
+    # Save as a geoparquet to save disk space and read/write times
+    tile_file = os.path.join(output_dir, f'{tile}.tif')
+    if os.path.exists(tile_file):
+        logging.debug(f"{tile_file} already exists")
+        return tile_file
+    
+    # If not cached, download it
+    tile_url = f"{c.ESA_BASE_URL}/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
+    logging.info(f"Downloading {tile} to {output_dir}")
+    
+    # Use gdal to create a local copy with compression
+    gdal.Translate(tile_file, tile_url, options=gdal.TranslateOptions(format='GTiff', creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2']))
+
+    
+
