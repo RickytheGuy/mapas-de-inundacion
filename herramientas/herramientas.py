@@ -6,12 +6,13 @@ import glob
 import shutil
 import logging
 import zipfile
+from typing import Union
 from urllib.error import HTTPError
 from concurrent.futures import ThreadPoolExecutor
 
 import tqdm
 import requests
-from osgeo import gdal
+from osgeo import gdal, ogr
 import geopandas as gpd
 from shapely.geometry import box
 
@@ -24,6 +25,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
+os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 gdal.UseExceptions()
 
 def download_fabdem(minx: float, 
@@ -181,3 +183,100 @@ def get_dems_in_extent(dem_dir: str,
             output.append(file)
         ds = None
     return output
+
+def download_geoglows_streams(minx: float,
+                              miny: float,
+                              maxx: float,
+                              maxy: float,
+                              output_dir: str = None) -> list[str]:
+    # Get VPU boundaries
+    VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.gpkg")
+    if os.path.exists(VPU_BOUNDARIES_PATH):
+        vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(VPU_BOUNDARIES_PATH)
+    else:
+        logging.info("Downloading VPU boundaries... this may take some time")
+        vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
+        # Simply geometries to reduce size
+        vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
+        vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
+        vpu_boundaries.to_file(VPU_BOUNDARIES_PATH)
+
+    bbox = box(minx, miny, maxx, maxy)
+    intersecting_vpus = vpu_boundaries[vpu_boundaries.intersects(bbox)]
+    if intersecting_vpus.empty:
+        logging.error("No VPU boundaries intersect with the bounding box")
+        return
+    
+    # Get the VPU names
+    vpus: list[str] = intersecting_vpus['VPU'].tolist()
+
+    # Download streamlines to cache
+    max_threads = min(os.cpu_count(), len(vpus))
+    with ThreadPoolExecutor(max_threads) as executor:
+        file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [output_dir] * len(vpus))
+
+    return list(file_paths)
+    
+
+
+def _download_geoglows_streams(vpu: str, 
+                               pbar_pos: int,
+                               output_dir: str = None) -> str:
+    if output_dir:
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+    else:
+        output_dir = c.CACHE_DIR
+
+    # Save as a geoparquet to save disk space and read/write times
+    vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
+    if os.path.exists(vpu_file):
+        logging.debug(f"{vpu_file} already exists")
+        return vpu_file
+    
+    # If not cached, download it
+    vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
+    logging.info(f"Downloading {vpu} streamlines to {c.CACHE_DIR}")
+    gpd.read_file(vpu_url).to_file(vpu_file)
+    return vpu_file
+
+def rasterize_streams(streams_files: Union[str, list[str]], 
+                     output_file: str, 
+                     resolution: float = 0.0001, 
+                     minx: float = None, 
+                     miny: float = None, 
+                     maxx: float = None, 
+                     maxy: float = None) -> None:
+    # We assume that the streams
+    if not streams_files:
+        logging.error("No streams file provided")
+        return
+    if not output_file:
+        logging.error("No output file provided")
+        return
+    
+    if isinstance(streams_files, str):
+        streams_files = [streams_files]
+
+    # Load the streams
+    # streams_df: gpd.GeoDataFrame = gpd.read_file(streams_file)
+
+
+    # Get the extent of the streams
+    if minx is None or miny is None or maxx is None or maxy is None:
+        bounds = streams_df.total_bounds
+        minx, miny, maxx, maxy = bounds
+
+    # Create a raster with the extent and resolution
+    x_size = int((maxx - minx) / resolution)
+    y_size = int((maxy - miny) / resolution)
+    driver = gdal.GetDriverByName('GTiff')
+    raster_ds: gdal.Dataset = driver.Create(output_file, x_size, y_size, 1, gdal.GDT_Byte)
+    raster_ds.SetGeoTransform((minx, resolution, 0, maxy, 0, -resolution))
+
+    # Rasterize the streams
+    gdal.RasterizeLayer(raster_ds, [1], streams_df.geometry.__geo_interface__, burn_values=[1])
+
+    # Clean up
+    raster_ds.FlushCache()
+    raster_ds = None
