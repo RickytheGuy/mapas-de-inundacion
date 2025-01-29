@@ -1,10 +1,11 @@
-name: arc
+name: spanish
 channels:
   - conda-forge
   - defaults
 dependencies:
   - gdal
   - geopandas
+  - libgdal-arrow-parquet
   - pyarrow
   - python
   - tqdm

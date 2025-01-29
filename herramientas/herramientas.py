@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import tqdm
 import requests
+import numpy as np
 from osgeo import gdal, ogr
 import geopandas as gpd
 from shapely.geometry import box
@@ -64,7 +65,7 @@ def download_fabdem(minx: float,
     # Download Fabdem zip folders and unzip
     max_threads = min(os.cpu_count(), len(zip_files))
     with ThreadPoolExecutor(max_threads) as executor:
-        executor.map(_download_fabdem, [(z, pos) for pos, z in enumerate(zip_files)])
+        executor.map(_download_fabdem, zip_files, range(len(zip_files)))
 
     # Move the files to the output directory
     os.makedirs(output_dir, exist_ok=True) 
@@ -75,8 +76,6 @@ def download_fabdem(minx: float,
         tiles_in_extent = get_fabdem_in_extent(zip_folder, minx, miny, maxx, maxy)
         for tile_file in tiles_in_extent:
             shutil.copy(tile_file, os.path.join(output_dir, os.path.basename(tile_file)))
-        else:
-            logging.warning(f"Could not extract tile coordinates from {tile_file}")
 
     if cleanup:
         logging.info("Cleaning up")
@@ -237,17 +236,14 @@ def _download_geoglows_streams(vpu: str,
     # If not cached, download it
     vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
     logging.info(f"Downloading {vpu} streamlines to {c.CACHE_DIR}")
-    gpd.read_file(vpu_url).to_file(vpu_file)
+    gpd.read_file(vpu_url).to_parquet(vpu_file)
     return vpu_file
 
-def rasterize_streams(streams_files: Union[str, list[str]], 
-                     output_file: str, 
-                     resolution: float = 0.0001, 
-                     minx: float = None, 
-                     miny: float = None, 
-                     maxx: float = None, 
-                     maxy: float = None) -> None:
-    # We assume that the streams
+def rasterize_streams(dem: str, 
+                      streams_files: Union[str, list[str]],  
+                      output_file: str,  
+                      burn_value: str = 'LINKNO') -> None:
+    # We assume that the DEM is in 4326 projection, and that the stream files are within the extent
     if not streams_files:
         logging.error("No streams file provided")
         return
@@ -258,25 +254,122 @@ def rasterize_streams(streams_files: Union[str, list[str]],
     if isinstance(streams_files, str):
         streams_files = [streams_files]
 
-    # Load the streams
-    # streams_df: gpd.GeoDataFrame = gpd.read_file(streams_file)
+    # Load the dem
+    with gdal.Open(dem) as ds:
+        gt = ds.GetGeoTransform()
+        proj = ds.GetProjection()
+        width = ds.RasterXSize
+        height = ds.RasterYSize
 
-
-    # Get the extent of the streams
-    if minx is None or miny is None or maxx is None or maxy is None:
-        bounds = streams_df.total_bounds
-        minx, miny, maxx, maxy = bounds
-
-    # Create a raster with the extent and resolution
-    x_size = int((maxx - minx) / resolution)
-    y_size = int((maxy - miny) / resolution)
-    driver = gdal.GetDriverByName('GTiff')
-    raster_ds: gdal.Dataset = driver.Create(output_file, x_size, y_size, 1, gdal.GDT_Byte)
-    raster_ds.SetGeoTransform((minx, resolution, 0, maxy, 0, -resolution))
+    # Create output raster
+    raster_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(output_file, width, height, 1, gdal.GDT_Int32)
+    raster_ds.SetGeoTransform(gt)
+    raster_ds.SetProjection(proj)
 
     # Rasterize the streams
-    gdal.RasterizeLayer(raster_ds, [1], streams_df.geometry.__geo_interface__, burn_values=[1])
+    for streams_file in streams_files:
+        stream_ds: gdal.Dataset = ogr.Open(streams_file)
+        layer = stream_ds.GetLayer()
+        gdal.RasterizeLayer(raster_ds, [1], layer, options=[f"ATTRIBUTE={burn_value}"])
 
     # Clean up
     raster_ds.FlushCache()
     raster_ds = None
+
+def ordinal(n: int) -> str:
+    suffix = ['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)] if not 11 <= (n % 100) <= 13 else 'th'
+    return f"{n}{suffix}"
+    
+def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
+    """
+    This function comes from Mike Follum's ARC at https://github.com/MikeFHS/automated-rating-curve
+    """
+    assert num_passes > 0, "num_passes must be greater than 0"
+    
+    # Get stream raster
+    stream_ds: gdal.Dataset = gdal.Open(stream_raster, gdal.GA_Update)
+    array: np.ndarray = stream_ds.ReadAsArray().astype(np.int64)
+    
+    #Create an array that is slightly larger than the STRM Raster Array
+    array = np.pad(array, ((1, 1), (1, 1)), mode='constant', constant_values=0)
+    
+    row_indices, col_indices = array.nonzero()
+    num_nonzero = len(row_indices)
+    
+    passes = []
+    pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells', desc="Cleaning stream raster")
+    for _ in range(num_passes):
+        #First pass is just to get rid of single cells hanging out not doing anything
+        p_count = 0
+        p_percent = (num_nonzero + 1) / 100.0
+        n=0
+        for x in range(num_nonzero):
+            pbar.update(1)
+            if x >= p_count * p_percent:
+                p_count = p_count + 1
+            r = row_indices[x]
+            c = col_indices[x]
+            if array[r,c] <= 0:
+                continue
+
+            #Left and Right cells are zeros
+            if array[r,c + 1] == 0 and array[r, c - 1] == 0:
+                #The bottom cells are all zeros as well, but there is a cell directly above that is legit
+                if (array[r+1,c-1]+array[r+1,c]+array[r+1,c+1])==0 and array[r-1,c]>0:
+                    array[r,c] = 0
+                    n=n+1
+                #The top cells are all zeros as well, but there is a cell directly below that is legit
+                elif (array[r-1,c-1]+array[r-1,c]+array[r-1,c+1])==0 and array[r+1,c]>0:
+                    array[r,c] = 0
+                    n=n+1
+            #top and bottom cells are zeros
+            if array[r,c]>0 and array[r+1,c]==0 and array[r-1,c]==0:
+                #All cells on the right are zero, but there is a cell to the left that is legit
+                if (array[r+1,c+1]+array[r,c+1]+array[r-1,c+1])==0 and array[r,c-1]>0:
+                    array[r,c] = 0
+                    n=n+1
+                elif (array[r+1,c-1]+array[r,c-1]+array[r-1,c-1])==0 and array[r,c+1]>0:
+                    array[r,c] = 0
+                    n=n+1
+        
+        passes.append(n)
+        
+        #This pass is to remove all the redundant cells
+        n = 0
+        p_count = 0
+        p_percent = (num_nonzero + 1) / 100.0
+        for x in range(num_nonzero):
+            pbar.update(1)
+            if x >= p_count * p_percent:
+                p_count = p_count + 1
+            r = row_indices[x]
+            c = col_indices[x]
+            value = array[r,c]
+            if value<=0:
+                continue
+
+            if array[r+1,c] == value and (array[r+1, c+1] == value or array[r+1, c-1] == value):
+                if array[r+1,c-1:c+2].max() == 0:
+                    array[r+ 1 , c] = 0
+                    n = n + 1
+            elif array[r-1,c] == value and (array[r-1, c+1] == value or array[r-1, c-1] == value):
+                if array[r-1,c-1:c+2].max() == 0:
+                    array[r- 1 , c] = 0
+                    n = n + 1
+            elif array[r,c+1] == value and (array[r+1, c+1] == value or array[r-1, c+1] == value):
+                if array[r-1:r+1,c+2].max() == 0:
+                    array[r, c + 1] = 0
+                    n = n + 1
+            elif array[r,c-1] == value and (array[r+1, c-1] == value or array[r-1, c-1] == value):
+                if array[r-1:r+1,c-2].max() == 0:
+                        array[r, c - 1] = 0
+                        n = n + 1
+
+        passes.append(n)
+    
+    #Write the cleaned array to the raster
+    stream_ds.WriteArray(array[1:-1, 1:-1])
+
+    for _pass in passes:
+        logging.info(f"{ordinal(passes.index(_pass) + 1)} pass removed {_pass} cells") 
+    

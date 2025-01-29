@@ -1,4 +1,4 @@
-from herramientas.herramientas import download_geoglows_streams, rasterize_streams
+from herramientas.herramientas import download_geoglows_streams
 
 minx = -66.5
 miny = 18.2
