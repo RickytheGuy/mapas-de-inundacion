@@ -290,7 +290,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     stream_ds: gdal.Dataset = gdal.Open(stream_raster, gdal.GA_Update)
     array: np.ndarray = stream_ds.ReadAsArray().astype(np.int64)
     
-    #Create an array that is slightly larger than the STRM Raster Array
+    # Create an array that is slightly larger than the STRM Raster Array
     array = np.pad(array, ((1, 1), (1, 1)), mode='constant', constant_values=0)
     
     row_indices, col_indices = array.nonzero()
@@ -299,7 +299,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     passes = []
     pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells', desc="Cleaning stream raster")
     for _ in range(num_passes):
-        #First pass is just to get rid of single cells hanging out not doing anything
+        # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
         p_percent = (num_nonzero + 1) / 100.0
         n=0
@@ -312,19 +312,19 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
             if array[r,c] <= 0:
                 continue
 
-            #Left and Right cells are zeros
+            # Left and Right cells are zeros
             if array[r,c + 1] == 0 and array[r, c - 1] == 0:
-                #The bottom cells are all zeros as well, but there is a cell directly above that is legit
+                # The bottom cells are all zeros as well, but there is a cell directly above that is legit
                 if (array[r+1,c-1]+array[r+1,c]+array[r+1,c+1])==0 and array[r-1,c]>0:
                     array[r,c] = 0
                     n=n+1
-                #The top cells are all zeros as well, but there is a cell directly below that is legit
+                # The top cells are all zeros as well, but there is a cell directly below that is legit
                 elif (array[r-1,c-1]+array[r-1,c]+array[r-1,c+1])==0 and array[r+1,c]>0:
                     array[r,c] = 0
                     n=n+1
-            #top and bottom cells are zeros
+            # top and bottom cells are zeros
             if array[r,c]>0 and array[r+1,c]==0 and array[r-1,c]==0:
-                #All cells on the right are zero, but there is a cell to the left that is legit
+                # All cells on the right are zero, but there is a cell to the left that is legit
                 if (array[r+1,c+1]+array[r,c+1]+array[r-1,c+1])==0 and array[r,c-1]>0:
                     array[r,c] = 0
                     n=n+1
@@ -334,7 +334,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
         
         passes.append(n)
         
-        #This pass is to remove all the redundant cells
+        # This pass is to remove all the redundant cells
         n = 0
         p_count = 0
         p_percent = (num_nonzero + 1) / 100.0
@@ -367,7 +367,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
 
         passes.append(n)
     
-    #Write the cleaned array to the raster
+    # Write the cleaned array to the raster
     stream_ds.WriteArray(array[1:-1, 1:-1])
 
     for _pass in passes:
@@ -429,8 +429,46 @@ def _download_esa_tile(tile: str,
     tile_url = f"{c.ESA_BASE_URL}/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
     logging.info(f"Downloading {tile} to {output_dir}")
     
-    # Use gdal to create a local copy with compression
+    # Use gdal to create a local copy with compression (literally saves GB of space)
     gdal.Translate(tile_file, tile_url, options=gdal.TranslateOptions(format='GTiff', creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2']))
 
-    
+def crop_and_resize_land_cover(dem: str,
+                               input_land_use: Union[str, list[str]],
+                               output_land_use: str,
+                               vrt: bool = False) -> None:
+    if not input_land_use:
+        logging.error("No land use files provided")
+        return
 
+    if isinstance(input_land_use, str):
+        input_land_use = [input_land_use]
+
+    input_land_use = [os.path.abspath(land) for land in input_land_use]
+
+    # Get DEM information
+    with gdal.Open(dem) as ds:
+        gt = ds.GetGeoTransform()
+        proj = ds.GetProjection()
+        width = ds.RasterXSize
+        height = ds.RasterYSize
+
+    # Create output raster
+    if vrt:
+        if output_land_use.endswith('.tif'):
+            output_land_use = output_land_use.replace('.tif', '.vrt')
+        options = gdal.BuildVRTOptions(outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]], 
+                                       srcNodata=0, 
+                                       xRes=abs(gt[1]), 
+                                       yRes=abs(gt[5]),
+                                       outputSRS=proj)
+        gdal.BuildVRT(output_land_use, input_land_use, options=options)
+    else:
+        options = gdal.WarpOptions(creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'],
+                                format='GTiff',
+                                outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]],
+                                dstSRS=proj,
+                                width=width,
+                                height=height,
+                                dstNodata=0)
+        gdal.Warp(output_land_use, input_land_use, options=options)
+    
