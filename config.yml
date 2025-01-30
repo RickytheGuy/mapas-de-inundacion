@@ -1,0 +1,17 @@
+# Extent of the area of interest
+minx: -66.5
+miny: 18.2
+maxx: -66.3
+maxy: 18.4
+
+# output folders
+dem_dir: test/dems
+output_dem: test/dem.tif
+
+streamlines_dir: test/streamlines
+output_streamlines: test/streamlines.parquet
+streamlines_raster_dir: test/streamlines_raster
+output_streams: test/streams.tif
+
+land_use_dir: test/land_use
+output_land_use: test/land_use.tif

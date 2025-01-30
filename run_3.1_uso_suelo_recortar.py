@@ -1,7 +1,12 @@
-from herramientas.herramientas import crop_and_resize_land_cover
+import os
+import glob
+from herramientas.herramientas import crop_and_resize_land_cover, read_config_yaml
 
-dem = r"C:\Users\lrr43\mapas-de-inundacion\dems_recortados\recorte.tif"
-input_land_use = r'C:\Users\lrr43\mapas-de-inundacion\land\N18W069.tif'
-output_land_use = r"C:\Users\lrr43\mapas-de-inundacion\land\lu_recorte.tif"
+configs = read_config_yaml('config.yml')
+output_dem = configs['output_dem']
+land_use_dir = configs['land_use_dir']
+input_land_use = glob.glob(os.path.join(land_use_dir, '*'))
+output_land_use = configs["output_land_use"]
 
-crop_and_resize_land_cover(dem, input_land_use, output_land_use, vrt=False)
+
+crop_and_resize_land_cover(output_dem, input_land_use, output_land_use, vrt=False)

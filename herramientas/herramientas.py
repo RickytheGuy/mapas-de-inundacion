@@ -3,6 +3,7 @@ import io
 import re
 import sys
 import glob
+import yaml
 import shutil
 import logging
 import zipfile
@@ -13,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import tqdm
 import requests
 import numpy as np
+import pandas as pd
 from osgeo import gdal, ogr
 import geopandas as gpd
 from shapely.geometry import box
@@ -28,6 +30,15 @@ logging.basicConfig(
 
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 gdal.UseExceptions()
+
+def read_config_yaml(config_file: str) -> dict:
+    with open(config_file, 'r') as stream:
+        try:
+            config = yaml.safe_load(stream)
+            return config
+        except yaml.YAMLError as e:
+            logging.error(f"Error reading the YAML file: {e}")
+            return {}
 
 def download_fabdem(minx: float, 
                     miny: float, 
@@ -187,18 +198,33 @@ def download_geoglows_streams(minx: float,
                               miny: float,
                               maxx: float,
                               maxy: float,
-                              output_dir: str = None) -> list[str]:
+                              streamlines_dir: str,
+                              output_streamlines: str) -> None:
+    if not output_streamlines:
+        logging.error(f"Please provide an output streamlines file")
+        return
+    
+    if minx >= maxx or miny >= maxy:
+        logging.error("Invalid bounding box")
+        return
+    
+    if not streamlines_dir:
+        logging.error(f"Please provide a streamlines directory")
+        return
+    
+    streamlines_dir = os.path.abspath(streamlines_dir)
+    
     # Get VPU boundaries
-    VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.gpkg")
+    VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.parquet")
     if os.path.exists(VPU_BOUNDARIES_PATH):
-        vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(VPU_BOUNDARIES_PATH)
+        vpu_boundaries: gpd.GeoDataFrame = gpd.read_parquet(VPU_BOUNDARIES_PATH)
     else:
         logging.info("Downloading VPU boundaries... this may take some time")
         vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
         # Simply geometries to reduce size
         vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
         vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
-        vpu_boundaries.to_file(VPU_BOUNDARIES_PATH)
+        vpu_boundaries.to_parquet(VPU_BOUNDARIES_PATH)
 
     bbox = box(minx, miny, maxx, maxy)
     intersecting_vpus = vpu_boundaries[vpu_boundaries.intersects(bbox)]
@@ -212,11 +238,18 @@ def download_geoglows_streams(minx: float,
     # Download streamlines to cache
     max_threads = min(os.cpu_count(), len(vpus))
     with ThreadPoolExecutor(max_threads) as executor:
-        file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [output_dir] * len(vpus))
+        file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [streamlines_dir] * len(vpus))
 
-    return list(file_paths)
+    # Now combine the files and crop to extent
+    gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
+    if gdf.empty:
+        logging.error("No streamlines found in the bounding box")
+        return
     
-
+    if output_streamlines.lower().endswith(('.parquet', '.geoparquet')):
+        gdf.to_parquet(output_streamlines)
+    else:
+        gdf.to_file(output_streamlines)
 
 def _download_geoglows_streams(vpu: str, 
                                pbar_pos: int,
@@ -235,15 +268,20 @@ def _download_geoglows_streams(vpu: str,
     
     # If not cached, download it
     vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
-    logging.info(f"Downloading {vpu} streamlines to {c.CACHE_DIR}")
-    gpd.read_file(vpu_url).to_parquet(vpu_file)
+    logging.info(f"Downloading VPU {vpu} to {vpu_file}")
+    (
+        gpd.read_file(vpu_url)
+        .to_crs('EPSG:4326')
+        .to_parquet(vpu_file, write_covering_bbox=True)
+    )
+
     return vpu_file
 
 def rasterize_streams(dem: str, 
                       streams_files: Union[str, list[str]],  
                       output_file: str,  
                       burn_value: str = 'LINKNO') -> None:
-    # We assume that the DEM is in 4326 projection, and that the stream files are within the extent
+    # We assume that the DEM is in 4326 projection
     if not streams_files:
         logging.error("No streams file provided")
         return
@@ -297,7 +335,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     num_nonzero = len(row_indices)
     
     passes = []
-    pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells', desc="Cleaning stream raster")
+    pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells')
     for _ in range(num_passes):
         # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
@@ -370,6 +408,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     # Write the cleaned array to the raster
     stream_ds.WriteArray(array[1:-1, 1:-1])
 
+    pbar.close()
     for _pass in passes:
         logging.info(f"{ordinal(passes.index(_pass) + 1)} pass removed {_pass} cells") 
     
@@ -472,3 +511,6 @@ def crop_and_resize_land_cover(dem: str,
                                 dstNodata=0)
         gdal.Warp(output_land_use, input_land_use, options=options)
     
+# pbar = tqdm.tqdm(total=1, unit='%', desc=f"Downloading {vpu} to {vpu_file}", position=pbar_pos)
+# def progress_cb(complete, message, cb_data):
+#     pbar.update(complete - pbar.n)

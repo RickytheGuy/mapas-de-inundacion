@@ -1,5 +1,12 @@
-from herramientas.herramientas import download_fabdem
+from herramientas.herramientas import download_fabdem, read_config_yaml
 
-download_fabdem(-66.5, 18.2, -66.3, 18.4, 'dems')
+configs = read_config_yaml('config.yml')
+minx = configs['minx']
+miny = configs['miny']
+maxx = configs['maxx']
+maxy = configs['maxy']
+dem_dir = configs['dem_dir']
+
+download_fabdem(minx, miny, maxx, maxy, dem_dir)
 
 

@@ -1,7 +1,12 @@
-from herramientas.herramientas import rasterize_streams
+import os
+import glob
 
-dem = r"C:\Users\lrr43\mapas-de-inundacion\dems_recortados\recorte.tif"
-streamlines_files = [r"C:\Users\lrr43\mapas-de-inundacion\cache\streams_718.geoparquet"]
-output = 'rasterized_streams.tif'
+from herramientas.herramientas import rasterize_streams, read_config_yaml
 
-rasterize_streams(dem, streamlines_files, output)
+configs = read_config_yaml('config.yml')
+
+output_dem = configs['output_dem']
+streamlines_files = configs['output_streamlines']
+output_streams = configs['output_streams']
+
+rasterize_streams(output_dem, streamlines_files, output_streams)
