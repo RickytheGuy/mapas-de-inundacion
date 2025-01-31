@@ -15,6 +15,7 @@ import tqdm
 import requests
 import numpy as np
 import pandas as pd
+import xarray as xr
 from osgeo import gdal, ogr
 import geopandas as gpd
 from shapely.geometry import box
@@ -514,3 +515,62 @@ def crop_and_resize_land_cover(dem: str,
 # pbar = tqdm.tqdm(total=1, unit='%', desc=f"Downloading {vpu} to {vpu_file}", position=pbar_pos)
 # def progress_cb(complete, message, cb_data):
 #     pbar.update(complete - pbar.n)
+
+def get_base_max(stream_raster: str,
+                 base_max_file: str,
+                 cache=True) -> None:
+    with gdal.Open(stream_raster) as ds:
+        array = ds.ReadAsArray()
+        linknos = np.unique(array)
+        if linknos[0] == 0:
+            linknos = linknos[1:]
+
+    # Open flow duration curve dataset and transformer table
+    fdc_zarr = os.path.join(c.CACHE_DIR, "fdc.zarr")
+    if os.path.exists(fdc_zarr):
+        ds = xr.open_zarr(fdc_zarr)
+    else:
+        logging.info("Downloading FDC Zarr file")
+        ds = xr.open_zarr(c.FDC_ZARR_URL, storage_options={"anon": True})
+        if cache: ds.to_zarr(fdc_zarr)
+
+    transformer_file = os.path.join(c.CACHE_DIR, "transformer_table.parquet")
+    if os.path.exists(transformer_file):
+        df = pd.read_parquet(transformer_file)
+    else:
+        logging.info("Downloading transformer table")
+        df = pd.read_parquet(c.FDS_TRANSFORM_URL)
+        if cache: df.to_parquet(transformer_file)
+
+    curve_to_linkno = df.loc[df['river_id'].isin(linknos), ['river_id', 'sfdc_curve_id']].set_index('sfdc_curve_id')['river_id'].to_dict()
+    base_df = ds['sfdc'].sel(p_exceed=50).mean(dim='month').to_dataframe()
+    max_df = ds['sfdc'].sel(p_exceed=0).mean(dim='month').to_dataframe()
+    max_df = max_df.rename(columns={'sfdc': 'maxflow'})
+    max_df = max_df.drop(columns=['p_exceed'])
+    max_df = max_df.dropna()
+
+    base_df = base_df.dropna()
+    base_df = base_df.drop(columns=['p_exceed'])
+
+    base_df = base_df.merge(max_df, on='rivid')
+    # Add some flow to max to capture potential future larger flows
+    base_df['maxflow'] = base_df['maxflow'] * 1.5 + 100
+
+    base_df['rivid'] = base_df['rivid'].astype(int)
+    base_df['linkno'] = base_df['rivid'].map(curve_to_linkno)
+    base_df = base_df.dropna()
+    base_df['linkno'] = base_df['linkno'].astype(int)
+    base_df = base_df.reset_index(drop=True)[['linkno', 'sfdc', 'maxflow']]
+
+    # Add missing linknos with the median value
+    missing_linknos = set(linknos) - set(base_df['linkno'])
+    if missing_linknos:
+        missing_df = pd.DataFrame({'linkno':[m for m in missing_linknos], 'sfdc':np.full(len(missing_linknos), base_df['sfdc'].median()), 'maxflow':np.full(len(missing_linknos), base_df['maxflow'].median())})
+        base_df = pd.concat([base_df, missing_df], ignore_index=True)
+
+    base_df = base_df.rename(columns={'sfdc': 'baseflow'})
+    base_df['baseflow'] = base_df['baseflow'].round(2)
+    base_df['maxflow'] = base_df['maxflow'].round(2)
+
+    base_df.to_csv(base_max_file, index=False)
+    logging.info(f"Baseflow values saved to {base_max_file}")

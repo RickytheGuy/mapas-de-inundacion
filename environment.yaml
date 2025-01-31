@@ -3,10 +3,14 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - fsspec
   - gdal
   - geopandas
   - libgdal-arrow-parquet
   - pyarrow
   - pyyaml
   - python
+  - s3fs
   - tqdm
+  - xarray
+  - zarr

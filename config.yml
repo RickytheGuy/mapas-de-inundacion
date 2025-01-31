@@ -15,3 +15,5 @@ output_streams: test/streams.tif
 
 land_use_dir: test/land_use
 output_land_use: test/land_use.tif
+
+base_max_file: test/base_max.csv

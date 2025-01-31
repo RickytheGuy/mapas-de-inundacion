@@ -11,3 +11,5 @@ STREAMLINES_BASE_URL = "s3://rfs-v2/hydrography/"
 
 ESA_BASE_URL = "https://esa-worldcover.s3.eu-central-1.amazonaws.com"
 
+FDC_ZARR_URL = "s3://rfs-v2/transformers/sfdc.zarr"
+FDS_TRANSFORM_URL = "s3://rfs-v2/transformers/transformer_table.parquet"
