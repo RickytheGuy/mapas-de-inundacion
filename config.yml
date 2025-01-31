@@ -17,3 +17,6 @@ land_use_dir: test/land_use
 output_land_use: test/land_use.tif
 
 base_max_file: test/base_max.csv
+
+flow_file: test/flows.csv
+return_period: 50

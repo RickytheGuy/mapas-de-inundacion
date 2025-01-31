@@ -574,3 +574,40 @@ def get_base_max(stream_raster: str,
 
     base_df.to_csv(base_max_file, index=False)
     logging.info(f"Baseflow values saved to {base_max_file}")
+
+def get_return_period(stream_raster: str,
+                      rp: int, 
+                      flow_file: str, 
+                      cache: bool = True) -> None:
+    annual_maximums_file = os.path.join(c.CACHE_DIR, "annual-maximums.zarr")
+    if os.path.exists(annual_maximums_file):
+        ds = xr.open_zarr(annual_maximums_file)
+    else:
+        logging.info("Downloading annual maximums Zarr file")
+        ds = xr.open_zarr(c.ANNUAL_ZARR_URL, storage_options={"anon": True})
+        ds.to_zarr(annual_maximums_file)
+
+    with gdal.Open(stream_raster) as ds_:
+        array = ds_.ReadAsArray()
+        linknos = np.unique(array)
+        if linknos[0] == 0:
+            linknos = linknos[1:]
+
+    df = ds.sel(river_id=linknos).to_dataframe()
+    df = df.reset_index('river_id')
+
+    def calculate_return_period(rp: int, q: pd.Series) -> float:
+        std = q.std()
+        xbar = q.mean()
+        return np.round(-np.log(-np.log(1 - (1 / rp))) * std * .7797 + xbar - (.45 * std), 2)
+
+    rivid_to_rp = {}
+    for rivid in df['river_id'].unique():
+        rivid_to_rp[rivid] = calculate_return_period(rp, df.loc[df['river_id'] == rivid, 'Q'])
+     
+    df[f'rp{rp}'] = df['river_id'].map(rivid_to_rp)
+    df = df.drop(columns='Q').reset_index(drop=True).drop_duplicates('river_id')[['river_id', f'rp{rp}']]
+    df = df.rename(columns={'river_id': 'linkno'})
+    df.to_csv(flow_file, index=False)
+    logging.info(f"Return period values saved to {flow_file}")
+
