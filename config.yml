@@ -19,4 +19,7 @@ output_land_use: test/land_use.tif
 base_max_file: test/base_max.csv
 
 flow_file: test/flows.csv
-return_period: 50
+flow_value_source: historical # Two options: return_period, historical
+return_period: 100
+date_start: 2000-01-01
+date_end: 2000-01-31

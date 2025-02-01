@@ -7,6 +7,8 @@ import yaml
 import shutil
 import logging
 import zipfile
+import datetime
+import warnings
 from typing import Union
 from urllib.error import HTTPError
 from concurrent.futures import ThreadPoolExecutor
@@ -516,98 +518,99 @@ def crop_and_resize_land_cover(dem: str,
 # def progress_cb(complete, message, cb_data):
 #     pbar.update(complete - pbar.n)
 
-def get_base_max(stream_raster: str,
-                 base_max_file: str,
-                 cache=True) -> None:
+def get_linknos(stream_raster: str,) -> np.ndarray:
     with gdal.Open(stream_raster) as ds:
         array = ds.ReadAsArray()
         linknos = np.unique(array)
         if linknos[0] == 0:
             linknos = linknos[1:]
+    return linknos
 
-    # Open flow duration curve dataset and transformer table
-    fdc_zarr = os.path.join(c.CACHE_DIR, "fdc.zarr")
-    if os.path.exists(fdc_zarr):
-        ds = xr.open_zarr(fdc_zarr)
-    else:
-        logging.info("Downloading FDC Zarr file")
-        ds = xr.open_zarr(c.FDC_ZARR_URL, storage_options={"anon": True})
-        if cache: ds.to_zarr(fdc_zarr)
 
-    transformer_file = os.path.join(c.CACHE_DIR, "transformer_table.parquet")
-    if os.path.exists(transformer_file):
-        df = pd.read_parquet(transformer_file)
-    else:
-        logging.info("Downloading transformer table")
-        df = pd.read_parquet(c.FDS_TRANSFORM_URL)
-        if cache: df.to_parquet(transformer_file)
+def get_base_max(stream_raster: str,
+                 base_max_file: str,
+                 cache=True) -> None:
+    linknos = get_linknos(stream_raster)
 
-    curve_to_linkno = df.loc[df['river_id'].isin(linknos), ['river_id', 'sfdc_curve_id']].set_index('sfdc_curve_id')['river_id'].to_dict()
-    base_df = ds['sfdc'].sel(p_exceed=50).mean(dim='month').to_dataframe()
-    max_df = ds['sfdc'].sel(p_exceed=0).mean(dim='month').to_dataframe()
-    max_df = max_df.rename(columns={'sfdc': 'maxflow'})
-    max_df = max_df.drop(columns=['p_exceed'])
-    max_df = max_df.dropna()
+    # Open the return period zarr
+    # Select return period 1000
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        df_max = (
+            xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options={"anon": True})
+            .sel(river_id=linknos, return_period=1000)
+            .to_dataframe()
+            .drop(columns='return_period')
+        )
 
-    base_df = base_df.dropna()
-    base_df = base_df.drop(columns=['p_exceed'])
+    # Now open daily zarr and get median
+    df_base = (
+        xr.open_zarr(c.DAILY_ZARR_URL, storage_options={"anon": True})
+        .sel(river_id=linknos)
+        .median(dim='time')
+        .to_dataframe()
+    )
 
-    base_df = base_df.merge(max_df, on='rivid')
-    # Add some flow to max to capture potential future larger flows
-    base_df['maxflow'] = base_df['maxflow'] * 1.5 + 100
-
-    base_df['rivid'] = base_df['rivid'].astype(int)
-    base_df['linkno'] = base_df['rivid'].map(curve_to_linkno)
-    base_df = base_df.dropna()
-    base_df['linkno'] = base_df['linkno'].astype(int)
-    base_df = base_df.reset_index(drop=True)[['linkno', 'sfdc', 'maxflow']]
-
-    # Add missing linknos with the median value
-    missing_linknos = set(linknos) - set(base_df['linkno'])
-    if missing_linknos:
-        missing_df = pd.DataFrame({'linkno':[m for m in missing_linknos], 'sfdc':np.full(len(missing_linknos), base_df['sfdc'].median()), 'maxflow':np.full(len(missing_linknos), base_df['maxflow'].median())})
-        base_df = pd.concat([base_df, missing_df], ignore_index=True)
-
-    base_df = base_df.rename(columns={'sfdc': 'baseflow'})
-    base_df['baseflow'] = base_df['baseflow'].round(2)
-    base_df['maxflow'] = base_df['maxflow'].round(2)
-
-    base_df.to_csv(base_max_file, index=False)
-    logging.info(f"Baseflow values saved to {base_max_file}")
+    # Merge and save csv
+    (
+        df_base.merge(df_max, on='river_id')
+        .rename(columns={'Q':'median', 'gumbel':'rp1000'})
+        .round(2)
+        .to_csv(base_max_file)
+    )
+    logging.info(f"Base and max values saved to {base_max_file}")
 
 def get_return_period(stream_raster: str,
                       rp: int, 
-                      flow_file: str, 
-                      cache: bool = True) -> None:
-    annual_maximums_file = os.path.join(c.CACHE_DIR, "annual-maximums.zarr")
-    if os.path.exists(annual_maximums_file):
-        ds = xr.open_zarr(annual_maximums_file)
-    else:
-        logging.info("Downloading annual maximums Zarr file")
-        ds = xr.open_zarr(c.ANNUAL_ZARR_URL, storage_options={"anon": True})
-        ds.to_zarr(annual_maximums_file)
+                      flow_file: str,) -> None:
+    linknos = get_linknos(stream_raster)
 
-    with gdal.Open(stream_raster) as ds_:
-        array = ds_.ReadAsArray()
-        linknos = np.unique(array)
-        if linknos[0] == 0:
-            linknos = linknos[1:]
+    logging.info("Opening return periods Zarr file")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ds = xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options={"anon": True})
 
-    df = ds.sel(river_id=linknos).to_dataframe()
-    df = df.reset_index('river_id')
-
-    def calculate_return_period(rp: int, q: pd.Series) -> float:
-        std = q.std()
-        xbar = q.mean()
-        return np.round(-np.log(-np.log(1 - (1 / rp))) * std * .7797 + xbar - (.45 * std), 2)
-
-    rivid_to_rp = {}
-    for rivid in df['river_id'].unique():
-        rivid_to_rp[rivid] = calculate_return_period(rp, df.loc[df['river_id'] == rivid, 'Q'])
-     
-    df[f'rp{rp}'] = df['river_id'].map(rivid_to_rp)
-    df = df.drop(columns='Q').reset_index(drop=True).drop_duplicates('river_id')[['river_id', f'rp{rp}']]
-    df = df.rename(columns={'river_id': 'linkno'})
-    df.to_csv(flow_file, index=False)
+    try:
+        df = ds.sel(river_id=linknos, return_period=rp).to_dataframe()
+    except KeyError:
+        logging.error(f"Return period {rp} not found in the dataset. Available return periods are {', '.join(ds['return_period'].values.astype(str))}")
+        return
+    
+    (
+        df.reset_index()
+        .drop(columns='return_period')
+        .rename(columns={'gumbel':f"rp{rp}"})
+        .rename(columns={'river_id': 'linkno'})
+        .round(2)
+        .to_csv(flow_file, index=False)
+    )
     logging.info(f"Return period values saved to {flow_file}")
 
+def get_historical(stream_raster: str,
+                   flow_file: str,
+                   date_start: str,
+                   date_end: str = None,) -> None:
+    linknos = get_linknos(stream_raster)
+
+    if date_end and date_end != date_start:
+        if date_end < date_start:
+            logging.error("End date is before start date")
+            return
+        selection = np.arange(date_start, date_end, dtype='datetime64[h]')
+    else:
+        selection = np.arange(date_start, date_start + datetime.timedelta(days=1), dtype='datetime64[h]')
+    
+    logging.info("Opening hourly Zarr file")
+    (
+        xr.open_zarr(c.HOURLY_ZARR_URL, storage_options={"anon": True})
+        .sel(river_id=linknos)
+        .sel(time=selection, method='nearest')
+        ['Q']
+        .max(dim='time')
+        .to_dataframe()
+        .reset_index()
+        .rename(columns={'Q':f"{date_start}{'--' + str(date_end) if date_end else ''}", 'river_id':'linkno'})
+        .round(2)
+        .to_csv(flow_file, index=False)
+    )
+    logging.info(f"Historical values saved to {flow_file}")
