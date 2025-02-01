@@ -15,11 +15,45 @@ output_streams: test/streams.tif
 
 land_use_dir: test/land_use
 output_land_use: test/land_use.tif
+land_use_text_file: ESA_land_use.txt
 
 base_max_file: test/base_max.csv
 
 flow_file: test/flows.csv
-flow_value_source: historical # Two options: return_period, historical
+flow_value_source: return_period # Two options: return_period, historical
 return_period: 100
 date_start: 2000-01-01
 date_end: 2000-01-31
+
+main_input_file: test/mifn.txt
+vdt_file: test/vdt.txt
+flood_map: test/flood_map.tif
+
+curve_file: ''
+meta_file: ''
+cross_section_file: ''
+
+set_depth: 0
+
+cross_section_distance: 5000
+degree_manipulation: 6.1
+degree_interval: 1.5
+low_spot_range: 5
+direction_distance: 5
+slope_distance: 1
+land_use_water_value: 80
+vdt_iterations: 15
+banks_from_land_use: False
+reach_average_curves: False
+create_shp_file: False
+q_fraction: 1.01
+top_width_max_limit: 1000
+top_width_factor: 3
+flood_local: False
+flood_obvious_stream_cells: False
+
+output_bathymetry: 'test/bathy.tif'
+bathy_trap_h: 0.2
+bathy_use_banks: True
+
+output_c2f_bathymetry: ''

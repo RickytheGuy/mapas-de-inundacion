@@ -148,6 +148,8 @@ def crop_and_merge(minx: float,
     
     # Needed for VRTs to work
     rasters = [os.path.abspath(raster) for raster in rasters]
+
+    output_file = os.path.abspath(output_file)
     
     if vrt:
         if output_file.endswith('.tif'):
@@ -206,6 +208,8 @@ def download_geoglows_streams(minx: float,
     if not output_streamlines:
         logging.error(f"Please provide an output streamlines file")
         return
+    
+    output_streamlines = os.path.abspath(output_streamlines)
     
     if minx >= maxx or miny >= maxy:
         logging.error("Invalid bounding box")
@@ -291,6 +295,8 @@ def rasterize_streams(dem: str,
     if not output_file:
         logging.error("No output file provided")
         return
+    
+    output_file = os.path.abspath(output_file)
     
     if isinstance(streams_files, str):
         streams_files = [streams_files]
@@ -426,6 +432,10 @@ def download_land_use(minx: float,
     if not output_dir:
         logging.error(f"Please provide an output directory")
         return
+    
+    output_dir = os.path.abspath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
     if minx >= maxx or miny >= maxy:
         logging.error("Invalid bounding box")
         return
@@ -461,6 +471,8 @@ def download_land_use(minx: float,
 
 def _download_esa_tile(tile: str, 
                       output_dir: str = None) -> str:
+    output_dir = os.path.abspath(output_dir)
+
     # Save as a geoparquet to save disk space and read/write times
     tile_file = os.path.join(output_dir, f'{tile}.tif')
     if os.path.exists(tile_file):
@@ -481,6 +493,8 @@ def crop_and_resize_land_cover(dem: str,
     if not input_land_use:
         logging.error("No land use files provided")
         return
+    
+    output_land_use = os.path.abspath(output_land_use)
 
     if isinstance(input_land_use, str):
         input_land_use = [input_land_use]
@@ -531,6 +545,7 @@ def get_base_max(stream_raster: str,
                  base_max_file: str,
                  cache=True) -> None:
     linknos = get_linknos(stream_raster)
+    base_max_file = os.path.abspath(base_max_file)
 
     # Open the return period zarr
     # Select return period 1000
@@ -564,6 +579,7 @@ def get_return_period(stream_raster: str,
                       rp: int, 
                       flow_file: str,) -> None:
     linknos = get_linknos(stream_raster)
+    flow_file = os.path.abspath(flow_file)
 
     logging.info("Opening return periods Zarr file")
     with warnings.catch_warnings():
@@ -591,6 +607,7 @@ def get_historical(stream_raster: str,
                    date_start: str,
                    date_end: str = None,) -> None:
     linknos = get_linknos(stream_raster)
+    flow_file = os.path.abspath(flow_file)
 
     if date_end and date_end != date_start:
         if date_end < date_start:
@@ -614,3 +631,73 @@ def get_historical(stream_raster: str,
         .to_csv(flow_file, index=False)
     )
     logging.info(f"Historical values saved to {flow_file}")
+
+def create_main_input_file(out_path: str, configs: dict) -> None:
+    with open(out_path, 'w') as f:
+        f.write("# Main input file for ARC and Curve2Flood\n\n")
+
+        f.write("\n# Input files - Required\n")
+        f.write(f"DEM_File\t{configs['output_dem']}\n")
+        f.write(f"Stream_File\t{configs['output_streams']}\n")
+        f.write(f"LU_Raster_SameRes\t{configs['output_land_use']}\n")
+        f.write(f"LU_Manning_n\t{configs['land_use_text_file']}\n")
+        f.write(f"Flow_File\t{configs['flow_file']}\n")
+        f.write(f"COMID_Flow_File\t{configs['base_max_file']}\n")
+
+        f.write("\n# Input files - Optional\n")
+        if configs['output_streamlines']: 
+            streams = configs['output_streamlines']  
+            if streams.endswith(('.parquet', '.geoparquet')):
+                # Convert to gpkg
+                streams = streams.replace('.parquet', '.gpkg')
+                streams = streams.replace('.geoparquet', '.gpkg')
+                if not os.path.exists(streams):
+                    gpd.read_parquet(configs['output_streamlines']).to_file(streams, driver='GPKG')
+            f.write(f"StrmShp_File\t{streams}\n")
+
+        f.write("\n# Output files - Required\n")
+        f.write(f"Print_VDT_Database\t{configs['vdt_file']}\n")
+
+        f.write("\n# Output files - Optional\n")
+        if configs['flood_map']: f.write(f"OutFLD\t{configs['flood_map']}\n")
+        if configs['curve_file']:   f.write(f"Print_Curve_File\t{configs['curve_file']}\n")
+        if configs['meta_file']:    f.write(f"Meta_File\t{configs['meta_file']}\n")
+        if configs['cross_section_file']: f.write(f"XS_Out_File\t{configs['cross_section_file']}\n")
+
+        f.write("\n# Parameters - Required\n")
+        f.write(f"Flow_File_ID\tlinkno\n")
+        f.write(f"Flow_File_BF\tmedian\n")
+        f.write(f"Flow_File_QMax\trp1000\n")
+        f.write(f"Spatial_Units\tdeg\n")
+        f.write(f"Set_Depth\t{configs['set_depth']}\n")
+
+        f.write("\n# Parameters - Optional\n")
+        if configs['cross_section_distance']:   f.write(f"X_Section_Dist\t{configs['cross_section_distance']}\n")
+        if configs['degree_manipulation']:      f.write(f"Degree_Manip\t{configs['degree_manipulation']}\n")
+        if configs['degree_interval']:          f.write(f"Degree_Interval\t{configs['degree_interval']}\n")
+        if configs['low_spot_range']:           f.write(f"Low_Spot_Range\t{configs['low_spot_range']}\n")
+        if configs['direction_distance']:       f.write(f"Gen_Dir_Dist\t{configs['direction_distance']}\n")
+        if configs['slope_distance']:           f.write(f"Gen_Slope_Dist\t{configs['slope_distance']}\n")
+        if configs['land_use_water_value']:           f.write(f"LC_Water_Value\t{configs['land_use_water_value']}\n")
+        if configs['vdt_iterations']:           f.write(f"VDT_Database_NumIterations\t{configs['vdt_iterations']}\n")
+        if configs['banks_from_land_use']:            f.write(f"FindBanksBasedOnLandCover\n")
+        if configs['reach_average_curves']:               f.write(f"Reach_Average_Curve_File\n")
+        if configs['q_fraction']:            f.write(f"Q_Fraction\t{configs['q_fraction']}\n")
+        if configs['top_width_max_limit']:        f.write(f"TopWidthPlausibleLimit\t{configs['top_width_max_limit']}\n")
+        if configs['top_width_factor']:        f.write(f"TW_MultFact\t{configs['top_width_factor']}\n")
+        if configs['flood_local']:        f.write(f"LocalFloodOption\t{configs['flood_local']}\n")
+        if configs['flood_obvious_stream_cells']:        f.write(f"Flood_WaterLC_and_STRM_Cells\t{configs['flood_obvious_stream_cells']}\n")
+
+        f.write("\n# Optional ARC Bathymetry\n")
+        if configs['output_bathymetry']:
+            f.write(f"BATHY_Out_File\t{configs['output_bathymetry']}\n")
+            if configs['bathy_trap_h']:          f.write(f"Bathy_Trap_H\t{configs['bathy_trap_h']}\n")
+            if configs['bathy_use_banks']:       f.write(f"Bathy_Use_Banks\n")
+
+        f.write("\n# Optional Curve2Flood Bathymetry\n")
+        if configs['output_c2f_bathymetry']:
+            f.write(f"FSOutBATHY\t{configs['output_c2f_bathymetry']}\n")
+
+    logging.info(f"Main input file saved to {out_path}")
+
+
