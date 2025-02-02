@@ -641,8 +641,8 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         f.write(f"Stream_File\t{configs['output_streams']}\n")
         f.write(f"LU_Raster_SameRes\t{configs['output_land_use']}\n")
         f.write(f"LU_Manning_n\t{configs['land_use_text_file']}\n")
-        f.write(f"Flow_File\t{configs['flow_file']}\n")
-        f.write(f"COMID_Flow_File\t{configs['base_max_file']}\n")
+        f.write(f"Flow_File\t{configs['base_max_file']}\n")
+        f.write(f"COMID_Flow_File\t{configs['flow_file']}\n")
 
         f.write("\n# Input files - Optional\n")
         if configs['output_streamlines']: 
@@ -665,7 +665,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         if configs['cross_section_file']: f.write(f"XS_Out_File\t{configs['cross_section_file']}\n")
 
         f.write("\n# Parameters - Required\n")
-        f.write(f"Flow_File_ID\tlinkno\n")
+        f.write(f"Flow_File_ID\triver_id\n")
         f.write(f"Flow_File_BF\tmedian\n")
         f.write(f"Flow_File_QMax\trp1000\n")
         f.write(f"Spatial_Units\tdeg\n")
@@ -692,7 +692,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         if configs['output_bathymetry']:
             f.write(f"BATHY_Out_File\t{configs['output_bathymetry']}\n")
             if configs['bathy_trap_h']:          f.write(f"Bathy_Trap_H\t{configs['bathy_trap_h']}\n")
-            if configs['bathy_use_banks']:       f.write(f"Bathy_Use_Banks\n")
+            if configs['bathy_use_banks']:       f.write(f"Bathy_Use_Banks\tTrue\n")
 
         f.write("\n# Optional Curve2Flood Bathymetry\n")
         if configs['output_c2f_bathymetry']:
