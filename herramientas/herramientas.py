@@ -542,8 +542,7 @@ def get_linknos(stream_raster: str,) -> np.ndarray:
 
 
 def get_base_max(stream_raster: str,
-                 base_max_file: str,
-                 cache=True) -> None:
+                 base_max_file: str,) -> None:
     linknos = get_linknos(stream_raster)
     base_max_file = os.path.abspath(base_max_file)
 
