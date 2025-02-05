@@ -13,13 +13,13 @@ from typing import Union
 from urllib.error import HTTPError
 from concurrent.futures import ThreadPoolExecutor
 
-import tqdm
 import requests
 import numpy as np
 import pandas as pd
 import xarray as xr
-from osgeo import gdal, ogr
 import geopandas as gpd
+from tqdm.auto import tqdm
+from osgeo import gdal, ogr
 from shapely.geometry import box
 
 from . import constantes as c
@@ -117,7 +117,7 @@ def _download_fabdem(zip_file: str,
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with tqdm.tqdm(total=total_size, unit='B', desc="Downloading", position=pbar_pos) as progress_bar:
+            with tqdm(total=total_size, unit='B', desc="Downloading", position=pbar_pos) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
                 for chunk in response.iter_content(chunk_size=1024):  
                     downloaded_data.write(chunk)
@@ -344,7 +344,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     num_nonzero = len(row_indices)
     
     passes = []
-    pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells')
+    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells')
     for _ in range(num_passes):
         # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
