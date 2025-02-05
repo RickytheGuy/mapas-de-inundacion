@@ -79,7 +79,7 @@ def download_fabdem(minx: float,
     # Download Fabdem zip folders and unzip
     max_threads = min(os.cpu_count(), len(zip_files))
     with ThreadPoolExecutor(max_threads) as executor:
-        executor.map(_download_fabdem, zip_files, range(len(zip_files)))
+        executor.map(_download_fabdem, zip_files)
 
     # Move the files to the output directory
     os.makedirs(output_dir, exist_ok=True) 
@@ -98,8 +98,7 @@ def download_fabdem(minx: float,
             if os.path.exists(zip_folder):
                 shutil.rmtree(zip_folder)
        
-def _download_fabdem(zip_file: str, 
-                     pbar_pos: int) -> None:
+def _download_fabdem(zip_file: str,) -> None:
     zip_url = c.FABDEM_BASE_URL + zip_file
     zip_folder = os.path.join(c.CACHE_DIR, zip_file.replace('.zip',''))
     if not os.path.exists(zip_folder):
@@ -117,7 +116,7 @@ def _download_fabdem(zip_file: str,
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with tqdm(total=total_size, unit='B', desc="Downloading", position=pbar_pos) as progress_bar:
+            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
                 for chunk in response.iter_content(chunk_size=1024):  
                     downloaded_data.write(chunk)
@@ -344,7 +343,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     num_nonzero = len(row_indices)
     
     passes = []
-    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells')
+    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells', leave=True)
     for _ in range(num_passes):
         # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
