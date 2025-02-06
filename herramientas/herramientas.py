@@ -116,7 +116,7 @@ def _download_fabdem(zip_file: str,) -> None:
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True) as progress_bar:
+            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
                 for chunk in response.iter_content(chunk_size=1024):  
                     downloaded_data.write(chunk)
@@ -343,7 +343,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     num_nonzero = len(row_indices)
     
     passes = []
-    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells', leave=True)
+    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells', leave=True, position=0)
     for _ in range(num_passes):
         # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
