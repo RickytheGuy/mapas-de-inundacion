@@ -34,6 +34,8 @@ logging.basicConfig(
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 gdal.UseExceptions()
 
+USE_PARQUET = gdal.GetDriverByName("Parquet") is not None
+
 def read_config_yaml(config_file: str) -> dict:
     with open(config_file, 'r') as stream:
         try:
@@ -221,16 +223,28 @@ def download_geoglows_streams(minx: float,
     streamlines_dir = os.path.abspath(streamlines_dir)
     
     # Get VPU boundaries
-    VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.parquet")
-    if os.path.exists(VPU_BOUNDARIES_PATH):
-        vpu_boundaries: gpd.GeoDataFrame = gpd.read_parquet(VPU_BOUNDARIES_PATH)
+    if USE_PARQUET:
+        VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.parquet")
+        if os.path.exists(VPU_BOUNDARIES_PATH):
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_parquet(VPU_BOUNDARIES_PATH)
+        else:
+            logging.info("Downloading VPU boundaries... this may take some time")
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
+            # Simply geometries to reduce size
+            vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
+            vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
+            vpu_boundaries.to_parquet(VPU_BOUNDARIES_PATH)
     else:
-        logging.info("Downloading VPU boundaries... this may take some time")
-        vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
-        # Simply geometries to reduce size
-        vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
-        vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
-        vpu_boundaries.to_parquet(VPU_BOUNDARIES_PATH)
+        VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.gpkg")
+        if os.path.exists(VPU_BOUNDARIES_PATH):
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(VPU_BOUNDARIES_PATH)
+        else:
+            logging.info("Downloading VPU boundaries... this may take some time")
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
+            # Simply geometries to reduce size
+            vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
+            vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
+            vpu_boundaries.to_file(VPU_BOUNDARIES_PATH)
 
     bbox = box(minx, miny, maxx, maxy)
     intersecting_vpus = vpu_boundaries[vpu_boundaries.intersects(bbox)]
@@ -247,12 +261,16 @@ def download_geoglows_streams(minx: float,
         file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [streamlines_dir] * len(vpus))
 
     # Now combine the files and crop to extent
-    gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
+    if USE_PARQUET:
+        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
+    else:
+        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_file(file, bbox=bbox) for file in file_paths])
+        
     if gdf.empty:
         logging.error("No streamlines found in the bounding box")
         return
     
-    if output_streamlines.lower().endswith(('.parquet', '.geoparquet')):
+    if output_streamlines.lower().endswith(('.parquet', '.geoparquet')) and USE_PARQUET:
         gdf.to_parquet(output_streamlines)
     else:
         gdf.to_file(output_streamlines)
@@ -267,7 +285,10 @@ def _download_geoglows_streams(vpu: str,
         output_dir = c.CACHE_DIR
 
     # Save as a geoparquet to save disk space and read/write times
-    vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
+    if USE_PARQUET:
+        vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
+    else:
+        vpu_file = os.path.join(output_dir, f'streams_{vpu}.gpkg')
     if os.path.exists(vpu_file):
         logging.debug(f"{vpu_file} already exists")
         return vpu_file
@@ -275,11 +296,11 @@ def _download_geoglows_streams(vpu: str,
     # If not cached, download it
     vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
     logging.info(f"Downloading VPU {vpu} to {vpu_file}")
-    (
-        gpd.read_file(vpu_url)
-        .to_crs('EPSG:4326')
-        .to_parquet(vpu_file, write_covering_bbox=True)
-    )
+    df = gpd.read_file(vpu_url).to_crs('EPSG:4326')
+    if USE_PARQUET:
+        df.to_parquet(vpu_file, write_covering_bbox=True)
+    else:
+        df.to_file(vpu_file, driver='GPKG')
 
     return vpu_file
 
