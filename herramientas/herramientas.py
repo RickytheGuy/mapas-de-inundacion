@@ -322,11 +322,12 @@ def rasterize_streams(dem: str,
         streams_files = [streams_files]
 
     # Load the dem
-    with gdal.Open(dem) as ds:
-        gt = ds.GetGeoTransform()
-        proj = ds.GetProjection()
-        width = ds.RasterXSize
-        height = ds.RasterYSize
+    ds: gdal.Dataset = gdal.Open(dem)
+    gt = ds.GetGeoTransform()
+    proj = ds.GetProjection()
+    width = ds.RasterXSize
+    height = ds.RasterYSize
+    ds = None
 
     # Create output raster
     raster_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(output_file, width, height, 1, gdal.GDT_Int32)
@@ -522,11 +523,12 @@ def crop_and_resize_land_cover(dem: str,
     input_land_use = [os.path.abspath(land) for land in input_land_use]
 
     # Get DEM information
-    with gdal.Open(dem) as ds:
-        gt = ds.GetGeoTransform()
-        proj = ds.GetProjection()
-        width = ds.RasterXSize
-        height = ds.RasterYSize
+    ds: gdal.Dataset = gdal.Open(dem)
+    gt = ds.GetGeoTransform()
+    proj = ds.GetProjection()
+    width = ds.RasterXSize
+    height = ds.RasterYSize
+    ds = None
 
     # Create output raster
     if vrt:
@@ -553,11 +555,11 @@ def crop_and_resize_land_cover(dem: str,
 #     pbar.update(complete - pbar.n)
 
 def get_linknos(stream_raster: str,) -> np.ndarray:
-    with gdal.Open(stream_raster) as ds:
-        array = ds.ReadAsArray()
-        linknos = np.unique(array)
-        if linknos[0] == 0:
-            linknos = linknos[1:]
+    ds: gdal.Dataset = gdal.Open(stream_raster)
+    array = ds.ReadAsArray()
+    linknos = np.unique(array)
+    if linknos[0] == 0:
+        linknos = linknos[1:]
     return linknos
 
 
