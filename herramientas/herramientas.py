@@ -270,13 +270,16 @@ def download_geoglows_streams(minx: float,
         logging.error("No streamlines found in the bounding box")
         return
     
-    if output_streamlines.lower().endswith(('.parquet', '.geoparquet')) and USE_PARQUET:
-        gdf.to_parquet(output_streamlines)
+    if output_streamlines.lower().endswith(('.parquet', '.geoparquet')):
+        if USE_PARQUET:
+            gdf.to_parquet(output_streamlines)
+        else:
+            logging.error("Cannot save as parquet. Please use GeoPackage or Shapefile")
+            raise ValueError("Cannot save as parquet. Please use GeoPackage or Shapefile")
     else:
         gdf.to_file(output_streamlines)
 
 def _download_geoglows_streams(vpu: str, 
-                               pbar_pos: int,
                                output_dir: str = None) -> str:
     if output_dir:
         output_dir = os.path.abspath(output_dir)
