@@ -4,35 +4,41 @@ miny: 18.2
 maxx: -66.3
 maxy: 18.4
 
+# flow files
+base_max_file: test/base_max.csv
+flow_value_source: return_period # Two options: return_period, historical
+flow_file: test/flows.csv
+return_period: 100
+date_start: 2000-01-01
+date_end: 2000-01-31
+
 # output folders
+# dem folders
 dem_dir: test/dems
 output_dem: test/dem.tif
 
+# streamlines folders
 streamlines_dir: test/streamlines
 output_streamlines: test/streamlines.parquet
 streamlines_raster_dir: test/streamlines_raster
 output_streams: test/streams.tif
 
+# land use folders
 land_use_dir: test/land_use
 output_land_use: test/land_use.tif
 land_use_text_file: ESA_land_use.txt
 
-base_max_file: test/base_max.csv
-
-flow_file: test/flows.csv
-flow_value_source: return_period # Two options: return_period, historical
-return_period: 100
-date_start: 2000-01-01
-date_end: 2000-01-31
-
+# ARC Required files
 main_input_file: test/mifn.txt
 vdt_file: test/vdt.txt
 flood_map: test/flood_map.tif
 
+# Optional files
 curve_file: ''
 meta_file: ''
 cross_section_file: ''
 
+# Parameters
 set_depth: 0
 
 cross_section_distance: 5000
@@ -52,6 +58,7 @@ top_width_factor: 3
 flood_local: False
 flood_obvious_stream_cells: False
 
+# Bathymetry, optional
 output_bathymetry: 'test/bathy.tif'
 bathy_trap_h: 0.2
 bathy_use_banks: True

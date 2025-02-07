@@ -13,13 +13,13 @@ from typing import Union
 from urllib.error import HTTPError
 from concurrent.futures import ThreadPoolExecutor
 
-import tqdm
 import requests
 import numpy as np
 import pandas as pd
 import xarray as xr
-from osgeo import gdal, ogr
 import geopandas as gpd
+from tqdm.auto import tqdm
+from osgeo import gdal, ogr
 from shapely.geometry import box
 
 from . import constantes as c
@@ -33,6 +33,8 @@ logging.basicConfig(
 
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 gdal.UseExceptions()
+
+USE_PARQUET = gdal.GetDriverByName("Parquet") is not None
 
 def read_config_yaml(config_file: str) -> dict:
     with open(config_file, 'r') as stream:
@@ -79,7 +81,7 @@ def download_fabdem(minx: float,
     # Download Fabdem zip folders and unzip
     max_threads = min(os.cpu_count(), len(zip_files))
     with ThreadPoolExecutor(max_threads) as executor:
-        executor.map(_download_fabdem, zip_files, range(len(zip_files)))
+        executor.map(_download_fabdem, zip_files)
 
     # Move the files to the output directory
     os.makedirs(output_dir, exist_ok=True) 
@@ -98,8 +100,7 @@ def download_fabdem(minx: float,
             if os.path.exists(zip_folder):
                 shutil.rmtree(zip_folder)
        
-def _download_fabdem(zip_file: str, 
-                     pbar_pos: int) -> None:
+def _download_fabdem(zip_file: str,) -> None:
     zip_url = c.FABDEM_BASE_URL + zip_file
     zip_folder = os.path.join(c.CACHE_DIR, zip_file.replace('.zip',''))
     if not os.path.exists(zip_folder):
@@ -117,7 +118,7 @@ def _download_fabdem(zip_file: str,
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with tqdm.tqdm(total=total_size, unit='B', desc="Downloading", position=pbar_pos) as progress_bar:
+            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
                 for chunk in response.iter_content(chunk_size=1024):  
                     downloaded_data.write(chunk)
@@ -222,16 +223,28 @@ def download_geoglows_streams(minx: float,
     streamlines_dir = os.path.abspath(streamlines_dir)
     
     # Get VPU boundaries
-    VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.parquet")
-    if os.path.exists(VPU_BOUNDARIES_PATH):
-        vpu_boundaries: gpd.GeoDataFrame = gpd.read_parquet(VPU_BOUNDARIES_PATH)
+    if USE_PARQUET:
+        VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.parquet")
+        if os.path.exists(VPU_BOUNDARIES_PATH):
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_parquet(VPU_BOUNDARIES_PATH)
+        else:
+            logging.info("Downloading VPU boundaries... this may take some time")
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
+            # Simply geometries to reduce size
+            vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
+            vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
+            vpu_boundaries.to_parquet(VPU_BOUNDARIES_PATH)
     else:
-        logging.info("Downloading VPU boundaries... this may take some time")
-        vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
-        # Simply geometries to reduce size
-        vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
-        vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
-        vpu_boundaries.to_parquet(VPU_BOUNDARIES_PATH)
+        VPU_BOUNDARIES_PATH = os.path.join(c.CACHE_DIR, "vpu-boundaries.gpkg")
+        if os.path.exists(VPU_BOUNDARIES_PATH):
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(VPU_BOUNDARIES_PATH)
+        else:
+            logging.info("Downloading VPU boundaries... this may take some time")
+            vpu_boundaries: gpd.GeoDataFrame = gpd.read_file(c.VPU_BOUNDARIES_URL)
+            # Simply geometries to reduce size
+            vpu_boundaries['geometry'] = vpu_boundaries['geometry'].simplify(0.001)
+            vpu_boundaries = vpu_boundaries.to_crs('EPSG:4326')
+            vpu_boundaries.to_file(VPU_BOUNDARIES_PATH)
 
     bbox = box(minx, miny, maxx, maxy)
     intersecting_vpus = vpu_boundaries[vpu_boundaries.intersects(bbox)]
@@ -245,21 +258,28 @@ def download_geoglows_streams(minx: float,
     # Download streamlines to cache
     max_threads = min(os.cpu_count(), len(vpus))
     with ThreadPoolExecutor(max_threads) as executor:
-        file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [streamlines_dir] * len(vpus))
+        file_paths = executor.map(_download_geoglows_streams, vpus, [streamlines_dir] * len(vpus))
 
     # Now combine the files and crop to extent
-    gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
+    if USE_PARQUET:
+        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
+    else:
+        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_file(file, bbox=bbox) for file in file_paths])
+        
     if gdf.empty:
         logging.error("No streamlines found in the bounding box")
         return
     
     if output_streamlines.lower().endswith(('.parquet', '.geoparquet')):
-        gdf.to_parquet(output_streamlines)
+        if USE_PARQUET:
+            gdf.to_parquet(output_streamlines)
+        else:
+            logging.error("Cannot save as parquet. Please use GeoPackage or Shapefile")
+            raise ValueError("Cannot save as parquet. Please use GeoPackage or Shapefile")
     else:
         gdf.to_file(output_streamlines)
 
 def _download_geoglows_streams(vpu: str, 
-                               pbar_pos: int,
                                output_dir: str = None) -> str:
     if output_dir:
         output_dir = os.path.abspath(output_dir)
@@ -268,7 +288,10 @@ def _download_geoglows_streams(vpu: str,
         output_dir = c.CACHE_DIR
 
     # Save as a geoparquet to save disk space and read/write times
-    vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
+    if USE_PARQUET:
+        vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
+    else:
+        vpu_file = os.path.join(output_dir, f'streams_{vpu}.gpkg')
     if os.path.exists(vpu_file):
         logging.debug(f"{vpu_file} already exists")
         return vpu_file
@@ -276,11 +299,11 @@ def _download_geoglows_streams(vpu: str,
     # If not cached, download it
     vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
     logging.info(f"Downloading VPU {vpu} to {vpu_file}")
-    (
-        gpd.read_file(vpu_url)
-        .to_crs('EPSG:4326')
-        .to_parquet(vpu_file, write_covering_bbox=True)
-    )
+    df = gpd.read_file(vpu_url).to_crs('EPSG:4326')
+    if USE_PARQUET:
+        df.to_parquet(vpu_file, write_covering_bbox=True)
+    else:
+        df.to_file(vpu_file, driver='GPKG')
 
     return vpu_file
 
@@ -302,11 +325,12 @@ def rasterize_streams(dem: str,
         streams_files = [streams_files]
 
     # Load the dem
-    with gdal.Open(dem) as ds:
-        gt = ds.GetGeoTransform()
-        proj = ds.GetProjection()
-        width = ds.RasterXSize
-        height = ds.RasterYSize
+    ds: gdal.Dataset = gdal.Open(dem)
+    gt = ds.GetGeoTransform()
+    proj = ds.GetProjection()
+    width = ds.RasterXSize
+    height = ds.RasterYSize
+    ds = None
 
     # Create output raster
     raster_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(output_file, width, height, 1, gdal.GDT_Int32)
@@ -344,7 +368,7 @@ def clean_stream_raster(stream_raster: str, num_passes: int = 2) -> None:
     num_nonzero = len(row_indices)
     
     passes = []
-    pbar = tqdm.tqdm(total=num_nonzero * num_passes * 2, unit='cells')
+    pbar = tqdm(total=num_nonzero * num_passes * 2, unit='cells', leave=True, position=0)
     for _ in range(num_passes):
         # First pass is just to get rid of single cells hanging out not doing anything
         p_count = 0
@@ -462,10 +486,11 @@ def download_land_use(minx: float,
     else:
         output_dir = c.CACHE_DIR
 
+    tiles = set(intersecting_tiles['ll_tile'])
     # Download the tiles
-    max_threads = min(os.cpu_count(), len(intersecting_tiles))
+    max_threads = min(os.cpu_count(), len(tiles))
     with ThreadPoolExecutor(max_threads) as executor:
-        file_paths = executor.map(_download_esa_tile, intersecting_tiles['ll_tile'].tolist(), [output_dir] * len(intersecting_tiles))
+        file_paths = executor.map(_download_esa_tile, tiles, [output_dir] * len(tiles))
 
     return list(file_paths)
 
@@ -502,11 +527,12 @@ def crop_and_resize_land_cover(dem: str,
     input_land_use = [os.path.abspath(land) for land in input_land_use]
 
     # Get DEM information
-    with gdal.Open(dem) as ds:
-        gt = ds.GetGeoTransform()
-        proj = ds.GetProjection()
-        width = ds.RasterXSize
-        height = ds.RasterYSize
+    ds: gdal.Dataset = gdal.Open(dem)
+    gt = ds.GetGeoTransform()
+    proj = ds.GetProjection()
+    width = ds.RasterXSize
+    height = ds.RasterYSize
+    ds = None
 
     # Create output raster
     if vrt:
@@ -533,17 +559,16 @@ def crop_and_resize_land_cover(dem: str,
 #     pbar.update(complete - pbar.n)
 
 def get_linknos(stream_raster: str,) -> np.ndarray:
-    with gdal.Open(stream_raster) as ds:
-        array = ds.ReadAsArray()
-        linknos = np.unique(array)
-        if linknos[0] == 0:
-            linknos = linknos[1:]
+    ds: gdal.Dataset = gdal.Open(stream_raster)
+    array = ds.ReadAsArray()
+    linknos = np.unique(array)
+    if linknos[0] == 0:
+        linknos = linknos[1:]
     return linknos
 
 
 def get_base_max(stream_raster: str,
-                 base_max_file: str,
-                 cache=True) -> None:
+                 base_max_file: str,) -> None:
     linknos = get_linknos(stream_raster)
     base_max_file = os.path.abspath(base_max_file)
 
