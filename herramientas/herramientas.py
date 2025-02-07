@@ -75,7 +75,7 @@ def download_fabdem(minx: float,
     intersecting_tiles = tiles_df[tiles_df.intersects(bbox)]
 
     # Get filenames
-    zip_files: list[str] = intersecting_tiles["zipfile_name"].tolist()
+    zip_files: set[str] = set(intersecting_tiles["zipfile_name"])
     # tile_files = intersecting_tiles['file_name'] # We cannot use this because filenames do not always match
 
     # Download Fabdem zip folders and unzip
@@ -253,7 +253,7 @@ def download_geoglows_streams(minx: float,
         return
     
     # Get the VPU names
-    vpus: list[str] = intersecting_vpus['VPU'].tolist()
+    vpus: set[str] = set(intersecting_vpus['VPU'])
 
     # Download streamlines to cache
     max_threads = min(os.cpu_count(), len(vpus))
@@ -486,10 +486,11 @@ def download_land_use(minx: float,
     else:
         output_dir = c.CACHE_DIR
 
+    tiles = set(intersecting_tiles['ll_tile'])
     # Download the tiles
-    max_threads = min(os.cpu_count(), len(intersecting_tiles))
+    max_threads = min(os.cpu_count(), len(tiles))
     with ThreadPoolExecutor(max_threads) as executor:
-        file_paths = executor.map(_download_esa_tile, intersecting_tiles['ll_tile'].tolist(), [output_dir] * len(intersecting_tiles))
+        file_paths = executor.map(_download_esa_tile, tiles, [output_dir] * len(tiles))
 
     return list(file_paths)
 
