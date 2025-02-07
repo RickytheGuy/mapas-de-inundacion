@@ -670,7 +670,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         f.write(f"COMID_Flow_File\t{os.path.abspath(configs['flow_file'])}\n")
 
         f.write("\n# Input files - Optional\n")
-        if configs['output_streamlines']: 
+        if configs['output_streamlines'] and configs.get('create_shp_file', False): 
             streams = os.path.abspath(configs['output_streamlines'])  
             if streams.endswith(('.parquet', '.geoparquet')):
                 # Convert to gpkg
