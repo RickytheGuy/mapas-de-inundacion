@@ -662,16 +662,16 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         f.write("# Main input file for ARC and Curve2Flood\n\n")
 
         f.write("\n# Input files - Required\n")
-        f.write(f"DEM_File\t{configs['output_dem']}\n")
-        f.write(f"Stream_File\t{configs['output_streams']}\n")
-        f.write(f"LU_Raster_SameRes\t{configs['output_land_use']}\n")
-        f.write(f"LU_Manning_n\t{configs['land_use_text_file']}\n")
-        f.write(f"Flow_File\t{configs['base_max_file']}\n")
-        f.write(f"COMID_Flow_File\t{configs['flow_file']}\n")
+        f.write(f"DEM_File\t{os.path.abspath(configs['output_dem'])}\n")
+        f.write(f"Stream_File\t{os.path.abspath(configs['output_streams'])}\n")
+        f.write(f"LU_Raster_SameRes\t{os.path.abspath(configs['output_land_use'])}\n")
+        f.write(f"LU_Manning_n\t{os.path.abspath(configs['land_use_text_file'])}\n")
+        f.write(f"Flow_File\t{os.path.abspath(configs['base_max_file'])}\n")
+        f.write(f"COMID_Flow_File\t{os.path.abspath(configs['flow_file'])}\n")
 
         f.write("\n# Input files - Optional\n")
         if configs['output_streamlines']: 
-            streams = configs['output_streamlines']  
+            streams = os.path.abspath(configs['output_streamlines'])  
             if streams.endswith(('.parquet', '.geoparquet')):
                 # Convert to gpkg
                 streams = streams.replace('.parquet', '.gpkg')
@@ -681,13 +681,13 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
             f.write(f"StrmShp_File\t{streams}\n")
 
         f.write("\n# Output files - Required\n")
-        f.write(f"Print_VDT_Database\t{configs['vdt_file']}\n")
+        f.write(f"Print_VDT_Database\t{os.path.abspath(configs['vdt_file'])}\n")
 
         f.write("\n# Output files - Optional\n")
-        if configs['flood_map']: f.write(f"OutFLD\t{configs['flood_map']}\n")
-        if configs['curve_file']:   f.write(f"Print_Curve_File\t{configs['curve_file']}\n")
-        if configs['meta_file']:    f.write(f"Meta_File\t{configs['meta_file']}\n")
-        if configs['cross_section_file']: f.write(f"XS_Out_File\t{configs['cross_section_file']}\n")
+        if configs['flood_map']: f.write(f"OutFLD\t{os.path.abspath(configs['flood_map'])}\n")
+        if configs['curve_file']:   f.write(f"Print_Curve_File\t{os.path.abspath(configs['curve_file'])}\n")
+        if configs['meta_file']:    f.write(f"Meta_File\t{os.path.abspath(configs['meta_file'])}\n")
+        if configs['cross_section_file']: f.write(f"XS_Out_File\t{os.path.abspath(configs['cross_section_file'])}\n")
 
         f.write("\n# Parameters - Required\n")
         f.write(f"Flow_File_ID\triver_id\n")
@@ -715,13 +715,13 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
 
         f.write("\n# Optional ARC Bathymetry\n")
         if configs['output_bathymetry']:
-            f.write(f"BATHY_Out_File\t{configs['output_bathymetry']}\n")
+            f.write(f"BATHY_Out_File\t{os.path.abspath(configs['output_bathymetry'])}\n")
             if configs['bathy_trap_h']:          f.write(f"Bathy_Trap_H\t{configs['bathy_trap_h']}\n")
             if configs['bathy_use_banks']:       f.write(f"Bathy_Use_Banks\tTrue\n")
 
         f.write("\n# Optional Curve2Flood Bathymetry\n")
         if configs['output_c2f_bathymetry']:
-            f.write(f"FSOutBATHY\t{configs['output_c2f_bathymetry']}\n")
+            f.write(f"FSOutBATHY\t{os.path.abspath(configs['output_c2f_bathymetry'])}\n")
 
     logging.info(f"Main input file saved to {out_path}")
 
