@@ -258,7 +258,7 @@ def download_geoglows_streams(minx: float,
     # Download streamlines to cache
     max_threads = min(os.cpu_count(), len(vpus))
     with ThreadPoolExecutor(max_threads) as executor:
-        file_paths = executor.map(_download_geoglows_streams, vpus, range(len(vpus)), [streamlines_dir] * len(vpus))
+        file_paths = executor.map(_download_geoglows_streams, vpus, [streamlines_dir] * len(vpus))
 
     # Now combine the files and crop to extent
     if USE_PARQUET:
