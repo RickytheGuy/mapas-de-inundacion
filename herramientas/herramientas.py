@@ -40,7 +40,8 @@ gdal.UseExceptions()
 S3 = boto3.client('s3', config=Config(signature_version=UNSIGNED, response_checksum_validation='when_required'))
 # Silences checksum warning
 STORAGE_OPTIONS={"anon": True, 'config_kwargs': {'response_checksum_validation':'when_required'}}
-
+CB_FMT = '{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+FABDEM_PATTERN = re.compile(r'([NS])(\d+)[EW](\d+)')  # Pattern to extract the tile coordinates
 
 USE_PARQUET = gdal.GetDriverByName("Parquet") is not None
 
@@ -160,16 +161,20 @@ def crop_and_merge(minx: float,
 
     output_file = os.path.abspath(output_file)
     
-    if vrt:
-        if output_file.endswith('.tif'):
-            output_file = output_file.replace('.tif', '.vrt')
-        options = gdal.BuildVRTOptions(outputBounds=[minx, miny, maxx, maxy])
-        gdal.BuildVRT(output_file, rasters, options=options)
-    else:
-        options = gdal.WarpOptions(creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'],
-                                   format='GTiff', 
-                                   outputBounds=[minx, miny, maxx, maxy])
-        gdal.Warp(output_file, rasters, options=options)
+    with tqdm(total=100, desc="Merging rasters", bar_format=CB_FMT) as pbar:
+        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n, 1))
+        if vrt:
+            if output_file.endswith('.tif'):
+                output_file = output_file.replace('.tif', '.vrt')
+            options = gdal.BuildVRTOptions(outputBounds=[minx, miny, maxx, maxy],
+                                           callback=_pbar)
+            gdal.BuildVRT(output_file, rasters, options=options)
+        else:
+            options = gdal.WarpOptions(creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'],
+                                    format='GTiff', 
+                                    outputBounds=[minx, miny, maxx, maxy],
+                                    callback=_pbar)
+            gdal.Warp(output_file, rasters, options=options)
 
 def get_fabdem_in_extent(dem_dir: str,
                          minx: float, 
@@ -177,11 +182,10 @@ def get_fabdem_in_extent(dem_dir: str,
                          maxx: float, 
                          maxy: float) -> list[str]:
     output = []
-    pattern = re.compile(r'([NS])(\d+)[EW](\d+)')  # Pattern to extract the tile coordinates
 
     for file in glob.glob(os.path.join(dem_dir, "*.tif")):
         basename = os.path.basename(file)
-        match = pattern.search(basename)
+        match = FABDEM_PATTERN.search(basename)
         if match:
             ns = 1 if match.group(1) == 'N' else -1
             ew = 1 if match.group(3) == 'E' else -1
@@ -348,7 +352,12 @@ def rasterize_streams(dem: str,
     for streams_file in streams_files:
         stream_ds: gdal.Dataset = ogr.Open(streams_file)
         layer = stream_ds.GetLayer()
-        gdal.RasterizeLayer(raster_ds, [1], layer, options=[f"ATTRIBUTE={burn_value}"])
+        with tqdm(total=100, desc=os.path.basename(streams_file), bar_format=CB_FMT) as pbar:
+            gdal.RasterizeLayer(raster_ds, 
+                                [1], 
+                                layer, 
+                                options=[f"ATTRIBUTE={burn_value}"], 
+                                callback=lambda info, *args: pbar.update(round(info * 100 - pbar.n, 2)))
 
     # Clean up
     raster_ds.FlushCache()
@@ -516,17 +525,12 @@ def _download_esa_tile(tile: str,
     logging.info(f"Downloading {tile} to {output_dir}")
     
     # Use gdal to create a local copy with compression (literally saves GB of space)
-    pbar = tqdm(total=100, unit='%', desc=tile)
+    with tqdm(total=100, desc=tile, bar_format=CB_FMT) as pbar:
+        options = gdal.TranslateOptions(format='GTiff', 
+                                        creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=2'],
+                                        callback=lambda info, *args: pbar.update(round(info * 100 - pbar.n, 2)))
 
-    # Define callback function for pbar
-    def _callback_func(info, *args):
-        pbar.update(info * 100 - pbar.n)
-
-    options = gdal.TranslateOptions(format='GTiff', 
-                                    creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=2'],
-                                    callback=_callback_func)
-
-    gdal.Translate(tile_file, tile_url, options=options)
+        gdal.Translate(tile_file, tile_url, options=options)
 
 def crop_and_resize_land_cover(dem: str,
                                input_land_use: Union[str, list[str]],
@@ -552,28 +556,28 @@ def crop_and_resize_land_cover(dem: str,
     ds = None
 
     # Create output raster
-    if vrt:
-        if output_land_use.endswith('.tif'):
-            output_land_use = output_land_use.replace('.tif', '.vrt')
-        options = gdal.BuildVRTOptions(outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]], 
-                                       srcNodata=0, 
-                                       xRes=abs(gt[1]), 
-                                       yRes=abs(gt[5]),
-                                       outputSRS=proj)
-        gdal.BuildVRT(output_land_use, input_land_use, options=options)
-    else:
-        options = gdal.WarpOptions(creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'],
-                                format='GTiff',
-                                outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]],
-                                dstSRS=proj,
-                                width=width,
-                                height=height,
-                                dstNodata=0)
-        gdal.Warp(output_land_use, input_land_use, options=options)
-    
-# pbar = tqdm.tqdm(total=1, unit='%', desc=f"Downloading {vpu} to {vpu_file}", position=pbar_pos)
-# def progress_cb(complete, message, cb_data):
-#     pbar.update(complete - pbar.n)
+    with tqdm(total=100, desc="Merging land use", bar_format=CB_FMT) as pbar:
+        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n, 1))
+        if vrt:
+            if output_land_use.endswith('.tif'):
+                output_land_use = output_land_use.replace('.tif', '.vrt')
+            options = gdal.BuildVRTOptions(outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]], 
+                                        srcNodata=0, 
+                                        xRes=abs(gt[1]), 
+                                        yRes=abs(gt[5]),
+                                        outputSRS=proj,
+                                        callback=_pbar)
+            gdal.BuildVRT(output_land_use, input_land_use, options=options)
+        else:
+            options = gdal.WarpOptions(creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'],
+                                    format='GTiff',
+                                    outputBounds=[gt[0], gt[3] + height * gt[5], gt[0] + width * gt[1], gt[3]],
+                                    dstSRS=proj,
+                                    width=width,
+                                    height=height,
+                                    dstNodata=0,
+                                    callback=_pbar)
+            gdal.Warp(output_land_use, input_land_use, options=options)
 
 def get_linknos(stream_raster: str,) -> np.ndarray:
     ds: gdal.Dataset = gdal.Open(stream_raster)
@@ -582,7 +586,6 @@ def get_linknos(stream_raster: str,) -> np.ndarray:
     if linknos[0] == 0:
         linknos = linknos[1:]
     return linknos
-
 
 def get_base_max(stream_raster: str,
                  base_max_file: str,) -> None:
