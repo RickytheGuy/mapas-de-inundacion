@@ -126,10 +126,10 @@ def _download_fabdem(zip_file: str,) -> None:
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with open(zip_folder, 'wb') as file, tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
+            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
                 for chunk in response.iter_content(chunk_size=1024):  # 64 KB chunks
-                    file.write(chunk)
+                    downloaded_data.write(chunk)
                     progress_bar.update(len(chunk))
 
             os.makedirs(zip_folder, exist_ok=True)
