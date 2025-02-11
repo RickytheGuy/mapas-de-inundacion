@@ -1,8 +1,8 @@
 # Extent of the area of interest
-minx: -66.5
-miny: 18.2
-maxx: -66.3
-maxy: 18.4
+minx: -90.0955545723
+miny: 13.1490168319
+maxx: -87.7235029772
+maxy: 14.4241327987
 
 # flow files
 base_max_file: test/base_max.csv
@@ -41,7 +41,7 @@ cross_section_file: ''
 # Parameters
 set_depth: 0
 
-cross_section_distance: 5000
+cross_section_distance: 4000
 degree_manipulation: 6.1
 degree_interval: 1.5
 low_spot_range: 5
@@ -53,10 +53,10 @@ banks_from_land_use: False
 reach_average_curves: False
 create_shp_file: False
 q_fraction: 1.01
-top_width_max_limit: 1000
+top_width_max_limit: 4000
 top_width_factor: 3
 flood_local: False
-flood_obvious_stream_cells: False
+flood_obvious_stream_cells: True
 
 # Bathymetry, optional
 output_bathymetry: 'test/bathy.tif'
