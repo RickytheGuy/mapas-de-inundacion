@@ -13,6 +13,7 @@ from typing import Union
 from urllib.error import HTTPError
 from concurrent.futures import ThreadPoolExecutor
 
+import boto3
 import requests
 import numpy as np
 import pandas as pd
@@ -20,7 +21,9 @@ import xarray as xr
 import geopandas as gpd
 from tqdm.auto import tqdm
 from osgeo import gdal, ogr
+from botocore import UNSIGNED
 from shapely.geometry import box
+from botocore.client import Config
 
 from . import constantes as c
 
@@ -33,6 +36,11 @@ logging.basicConfig(
 
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 gdal.UseExceptions()
+
+S3 = boto3.client('s3', config=Config(signature_version=UNSIGNED, response_checksum_validation='when_required'))
+# Silences checksum warning
+STORAGE_OPTIONS={"anon": True, 'config_kwargs': {'response_checksum_validation':'when_required'}}
+
 
 USE_PARQUET = gdal.GetDriverByName("Parquet") is not None
 
@@ -118,10 +126,10 @@ def _download_fabdem(zip_file: str,) -> None:
 
             # Create a BytesIO object to store the downloaded content
             downloaded_data = io.BytesIO()
-            with tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
+            with open(zip_folder, 'wb') as file, tqdm(total=total_size, unit='B', desc="Downloading", leave=True, position=0) as progress_bar:
                 # Download in 1 KB chunks; this seems fastest for this dataset
-                for chunk in response.iter_content(chunk_size=1024):  
-                    downloaded_data.write(chunk)
+                for chunk in response.iter_content(chunk_size=1024):  # 64 KB chunks
+                    file.write(chunk)
                     progress_bar.update(len(chunk))
 
             os.makedirs(zip_folder, exist_ok=True)
@@ -261,14 +269,14 @@ def download_geoglows_streams(minx: float,
         file_paths = executor.map(_download_geoglows_streams, vpus, [streamlines_dir] * len(vpus))
 
     # Now combine the files and crop to extent
-    if USE_PARQUET:
-        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_parquet(file, columns=['LINKNO', 'geometry'], bbox=(minx, miny, maxx, maxy)) for file in file_paths])
-    else:
-        gdf: gpd.GeoDataFrame = pd.concat([gpd.read_file(file, bbox=bbox) for file in file_paths])
+    bbox_gdf = gpd.GeoDataFrame(geometry=[bbox], crs='EPSG:4326').to_crs('EPSG:3857')
+    gdf: gpd.GeoDataFrame = pd.concat([gpd.read_file(file, bbox=bbox_gdf) for file in file_paths])
         
     if gdf.empty:
         logging.error("No streamlines found in the bounding box")
         return
+    
+    gdf = gdf.to_crs('EPSG:4326')
     
     if output_streamlines.lower().endswith(('.parquet', '.geoparquet')):
         if USE_PARQUET:
@@ -279,6 +287,14 @@ def download_geoglows_streams(minx: float,
     else:
         gdf.to_file(output_streamlines)
 
+def download_from_s3(local_file_name, s3_bucket, s3_object_key):
+    meta_data = S3.head_object(Bucket=s3_bucket, Key=s3_object_key)
+    total_length = int(meta_data.get('ContentLength', 0))
+    with tqdm(total=total_length,  desc=os.path.basename(local_file_name), unit='B', unit_scale=True, unit_divisor=1024) as pbar:
+        with open(local_file_name, 'wb') as f:
+            S3.download_file(s3_bucket, s3_object_key, local_file_name, Callback=pbar.update)
+
+
 def _download_geoglows_streams(vpu: str, 
                                output_dir: str = None) -> str:
     if output_dir:
@@ -287,23 +303,14 @@ def _download_geoglows_streams(vpu: str,
     else:
         output_dir = c.CACHE_DIR
 
-    # Save as a geoparquet to save disk space and read/write times
-    if USE_PARQUET:
-        vpu_file = os.path.join(output_dir, f'streams_{vpu}.geoparquet')
-    else:
-        vpu_file = os.path.join(output_dir, f'streams_{vpu}.gpkg')
+    vpu_file = os.path.join(output_dir, f'streams_{vpu}.gpkg')
     if os.path.exists(vpu_file):
         logging.debug(f"{vpu_file} already exists")
         return vpu_file
     
     # If not cached, download it
-    vpu_url = f'{c.STREAMLINES_BASE_URL}vpu={vpu}/streams_{vpu}.gpkg'
     logging.info(f"Downloading VPU {vpu} to {vpu_file}")
-    df = gpd.read_file(vpu_url).to_crs('EPSG:4326')
-    if USE_PARQUET:
-        df.to_parquet(vpu_file, write_covering_bbox=True)
-    else:
-        df.to_file(vpu_file, driver='GPKG')
+    download_from_s3(vpu_file, 'rfs-v2', f'hydrography/vpu={vpu}/streams_{vpu}.gpkg')       
 
     return vpu_file
 
@@ -509,7 +516,17 @@ def _download_esa_tile(tile: str,
     logging.info(f"Downloading {tile} to {output_dir}")
     
     # Use gdal to create a local copy with compression (literally saves GB of space)
-    gdal.Translate(tile_file, tile_url, options=gdal.TranslateOptions(format='GTiff', creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2']))
+    pbar = tqdm(total=100, unit='%', desc=tile)
+
+    # Define callback function for pbar
+    def _callback_func(info, *args):
+        pbar.update(info * 100 - pbar.n)
+
+    options = gdal.TranslateOptions(format='GTiff', 
+                                    creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=2'],
+                                    callback=_callback_func)
+
+    gdal.Translate(tile_file, tile_url, options=options)
 
 def crop_and_resize_land_cover(dem: str,
                                input_land_use: Union[str, list[str]],
@@ -577,7 +594,7 @@ def get_base_max(stream_raster: str,
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         df_max = (
-            xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options={"anon": True})
+            xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS)
             .sel(river_id=linknos, return_period=1000)
             .to_dataframe()
             .drop(columns='return_period')
@@ -585,7 +602,7 @@ def get_base_max(stream_raster: str,
 
     # Now open daily zarr and get median
     df_base = (
-        xr.open_zarr(c.DAILY_ZARR_URL, storage_options={"anon": True})
+        xr.open_zarr(c.DAILY_ZARR_URL, storage_options=STORAGE_OPTIONS)
         .sel(river_id=linknos)
         .median(dim='time')
         .to_dataframe()
@@ -609,7 +626,7 @@ def get_return_period(stream_raster: str,
     logging.info("Opening return periods Zarr file")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        ds = xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options={"anon": True})
+        ds = xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS)
 
     try:
         df = ds.sel(river_id=linknos, return_period=rp).to_dataframe()
@@ -644,7 +661,7 @@ def get_historical(stream_raster: str,
     
     logging.info("Opening hourly Zarr file")
     (
-        xr.open_zarr(c.HOURLY_ZARR_URL, storage_options={"anon": True})
+        xr.open_zarr(c.HOURLY_ZARR_URL, storage_options=STORAGE_OPTIONS)
         .sel(river_id=linknos)
         .sel(time=selection, method='nearest')
         ['Q']

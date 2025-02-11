@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - boto3
   - dask
   - fsspec
   - gdal
@@ -11,7 +12,6 @@ dependencies:
   - pyarrow
   - pyyaml
   - python
-  - s3fs
   - tqdm
   - xarray
   - zarr
