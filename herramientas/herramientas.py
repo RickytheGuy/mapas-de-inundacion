@@ -162,7 +162,7 @@ def crop_and_merge(minx: float,
     output_file = os.path.abspath(output_file)
     
     with tqdm(total=100, desc="Merging rasters", bar_format=CB_FMT) as pbar:
-        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n, 1))
+        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n))
         if vrt:
             if output_file.endswith('.tif'):
                 output_file = output_file.replace('.tif', '.vrt')
@@ -557,7 +557,7 @@ def crop_and_resize_land_cover(dem: str,
 
     # Create output raster
     with tqdm(total=100, desc="Merging land use", bar_format=CB_FMT) as pbar:
-        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n, 1))
+        _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n))
         if vrt:
             if output_land_use.endswith('.tif'):
                 output_land_use = output_land_use.replace('.tif', '.vrt')
