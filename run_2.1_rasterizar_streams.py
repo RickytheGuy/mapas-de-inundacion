@@ -1,6 +1,3 @@
-import os
-import glob
-
 from herramientas.herramientas import rasterize_streams, read_config_yaml
 
 configs = read_config_yaml('config.yml')
