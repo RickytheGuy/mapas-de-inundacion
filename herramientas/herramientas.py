@@ -160,6 +160,7 @@ def crop_and_merge(minx: float,
     rasters = [os.path.abspath(raster) for raster in rasters]
 
     output_file = os.path.abspath(output_file)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
     with tqdm(total=100, desc="Merging rasters", bar_format=CB_FMT) as pbar:
         _pbar = lambda info, *args: pbar.update(round(info * 100 - pbar.n))
@@ -593,15 +594,22 @@ def get_base_max(stream_raster: str,
     base_max_file = os.path.abspath(base_max_file)
 
     # Open the return period zarr
-    # Select return period 1000
+    # Select return period 100
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        df_max = (
-            xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS)
-            .sel(river_id=linknos, return_period=1000)
-            .to_dataframe()
-            .drop(columns='return_period')
-        )
+        with xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS) as ds:
+            # Filter to only include existing values
+            existing = set(ds['river_id'].values)
+            linknos = [r for r in linknos if r in existing]
+
+            df_max = (
+                ds.sel(river_id=linknos, return_period=100)
+                .to_dataframe()
+                .drop(columns='return_period')
+            )
+
+    # Adjust the rp100 to be a little bigger
+    df_max['gumbel'] = df_max['gumbel'] * 1.5 + 50
 
     # Now open daily zarr and get median
     df_base = (
@@ -614,7 +622,7 @@ def get_base_max(stream_raster: str,
     # Merge and save csv
     (
         df_base.merge(df_max, on='river_id')
-        .rename(columns={'Q':'median', 'gumbel':'rp1000'})
+        .rename(columns={'Q':'median', 'gumbel':'max'})
         .round(2)
         .to_csv(base_max_file)
     )
@@ -630,7 +638,9 @@ def get_return_period(stream_raster: str,
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ds = xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS)
-
+        # Filter linknos to only include existing values
+        existing = set(ds['river_id'].values)
+        linknos = [r for r in linknos if r in existing]
     try:
         df = ds.sel(river_id=linknos, return_period=rp).to_dataframe()
     except KeyError:
@@ -712,7 +722,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         f.write("\n# Parameters - Required\n")
         f.write(f"Flow_File_ID\triver_id\n")
         f.write(f"Flow_File_BF\tmedian\n")
-        f.write(f"Flow_File_QMax\trp1000\n")
+        f.write(f"Flow_File_QMax\tmax\n")
         f.write(f"Spatial_Units\tdeg\n")
         f.write(f"Set_Depth\t{configs['set_depth']}\n")
 
