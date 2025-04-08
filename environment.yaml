@@ -9,9 +9,12 @@ dependencies:
   - gdal
   - geopandas
   - libgdal-arrow-parquet
+  - numba=0.60
+  - python
   - pyarrow
   - pyyaml
   - python
+  - s3fs
   - tqdm
   - xarray
-  - zarr
+  - zarr>=3

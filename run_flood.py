@@ -9,6 +9,8 @@ return_period = configs['return_period']
 date_start = configs['date_start']
 date_end = configs['date_end']
 main_input_file = configs['main_input_file']
+oceans_file = configs['oceans_file']
+flood_map = configs['flood_map']
 
 if configs['flow_value_source'] == 'return_period':
     h.get_return_period(stream_raster, return_period, flow_file)
@@ -21,3 +23,6 @@ h.create_main_input_file(main_input_file, configs)
 
 # Run the main input file
 Curve2Flood_MainFunction(main_input_file)
+
+if oceans_file:
+    h.remove_oceans(flood_map, oceans_file)

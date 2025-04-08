@@ -9,8 +9,12 @@ base_max_file: test/base_max.csv
 flow_value_source: return_period # Two options: return_period, historical
 flow_file: test/flows.csv
 return_period: 100
-date_start: 2000-01-01
-date_end: 2000-01-31
+flood_map: panama/flood_map.tif
+date_start: 2022-11-01
+date_end: 2022-11-30
+
+# oceans file
+oceans_file: /Users/louisrosas/Downloads/seas_buffered.parquet
 
 # output folders
 # dem folders
@@ -41,26 +45,26 @@ cross_section_file: ''
 # Parameters
 set_depth: 0
 
-cross_section_distance: 4000
+cross_section_distance: 5000
 degree_manipulation: 6.1
 degree_interval: 1.5
-low_spot_range: 5
-direction_distance: 5
-slope_distance: 1
+low_spot_range: 2
+direction_distance: 10
+slope_distance: 10
 land_use_water_value: 80
-vdt_iterations: 15
+vdt_iterations: 30
 banks_from_land_use: False
 reach_average_curves: False
 create_shp_file: False
 q_fraction: 1.01
-top_width_max_limit: 4000
-top_width_factor: 3
+top_width_max_limit: 5000
+top_width_factor: 1.5
 flood_local: False
 flood_obvious_stream_cells: True
 
 # Bathymetry, optional
 output_bathymetry: 'test/bathy.tif'
 bathy_trap_h: 0.2
-bathy_use_banks: True
+bathy_use_banks: False
 
 output_c2f_bathymetry: ''

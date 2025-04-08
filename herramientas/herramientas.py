@@ -609,6 +609,8 @@ def get_base_max(stream_raster: str,
             )
 
     # Adjust the rp100 to be a little bigger
+    df_max['gumbel'] = df_max['logpearson3'].fillna(df_max['gumbel'])
+    df = df.drop(columns=['logpearson3'])
     df_max['gumbel'] = df_max['gumbel'] * 1.5 + 50
 
     # Now open daily zarr and get median
@@ -647,12 +649,16 @@ def get_return_period(stream_raster: str,
         logging.error(f"Return period {rp} not found in the dataset. Available return periods are {', '.join(ds['return_period'].values.astype(str))}")
         return
     
-    (
+    df = (
         df.reset_index()
         .drop(columns='return_period')
-        .rename(columns={'gumbel':f"rp{rp}"})
         .rename(columns={'river_id': 'linkno'})
         .round(2)
+    )
+    df['logpearson3'] = df['logpearson3'].fillna(df[f'gumbel'])
+    (
+        df.drop(columns=['gumbel'])
+        .rename(columns={'logpearson3': f"rp{rp}"})
         .to_csv(flow_file, index=False)
     )
     logging.info(f"Return period values saved to {flow_file}")
@@ -724,7 +730,6 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
         f.write(f"Flow_File_BF\tmedian\n")
         f.write(f"Flow_File_QMax\tmax\n")
         f.write(f"Spatial_Units\tdeg\n")
-        f.write(f"Set_Depth\t{configs['set_depth']}\n")
 
         f.write("\n# Parameters - Optional\n")
         if configs['cross_section_distance']:   f.write(f"X_Section_Dist\t{configs['cross_section_distance']}\n")
@@ -745,6 +750,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
 
         f.write("\n# Optional ARC Bathymetry\n")
         if configs['output_bathymetry']:
+            f.write(f"AROutBATHY\t{os.path.abspath(configs['output_bathymetry'])}\n")
             f.write(f"BATHY_Out_File\t{os.path.abspath(configs['output_bathymetry'])}\n")
             if configs['bathy_trap_h']:          f.write(f"Bathy_Trap_H\t{configs['bathy_trap_h']}\n")
             if configs['bathy_use_banks']:       f.write(f"Bathy_Use_Banks\tTrue\n")
@@ -755,4 +761,44 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
 
     logging.info(f"Main input file saved to {out_path}")
 
+def remove_oceans(raster_file: str, oceans_file: str) -> None:
+    """
+    Remove oceans from the raster file using the oceans shapefile.
+    """
+    if not os.path.exists(oceans_file):
+        logging.error(f"Ocean shapefile {oceans_file} does not exist")
+        return
+    
+    if not os.path.exists(raster_file):
+        logging.error(f"Raster file {raster_file} does not exist")
+        return
 
+    # Open the raster file
+    dem_ds: gdal.Dataset = gdal.Open(raster_file, gdal.GA_Update)
+    gt = dem_ds.GetGeoTransform()
+    proj = dem_ds.GetProjection()
+    
+    logging.info('Rasterizing oceans shapefile; this may take a 2 minutes...')
+    options = gdal.RasterizeOptions(format='MEM',
+                                    outputType=gdal.GDT_Byte,
+                                    outputSRS=proj,
+                                    xRes=abs(gt[1]),
+                                    yRes=abs(gt[5]),
+                                    burnValues=[1],
+                                    allTouched=True,
+                                    outputBounds=[gt[0], gt[3] + dem_ds.RasterYSize * gt[5], gt[0] + dem_ds.RasterXSize * gt[1], gt[3]],)
+    oceans_ds = gdal.Rasterize('', oceans_file, options=options)
+
+    # Read the in memory raster into an array
+    oceans = oceans_ds.ReadAsArray()
+
+    # Set the ocean values to 0 in the original raster
+    dem: np.ndarray = dem_ds.ReadAsArray()
+    dem[oceans == 1] = 0
+    dem_ds.WriteArray(dem)
+    dem_ds.FlushCache()
+    dem_ds.GetRasterBand(1).SetNoDataValue(0)
+    dem_ds = None
+    oceans_ds = None
+
+    return
