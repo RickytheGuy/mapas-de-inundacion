@@ -346,7 +346,7 @@ def rasterize_streams(dem: str,
     ds = None
 
     # Create output raster
-    raster_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(output_file, width, height, 1, gdal.GDT_Int32)
+    raster_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(output_file, width, height, 1, gdal.GDT_Int32, creationOptions=['COMPRESS=DEFLATE', 'BIGTIFF=YES', 'PREDICTOR=2'])
     raster_ds.SetGeoTransform(gt)
     raster_ds.SetProjection(proj)
 
