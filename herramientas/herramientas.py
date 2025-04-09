@@ -5,6 +5,7 @@ import sys
 import glob
 import yaml
 import shutil
+import atexit
 import logging
 import zipfile
 import datetime
@@ -610,7 +611,7 @@ def get_base_max(stream_raster: str,
 
     # Adjust the rp100 to be a little bigger
     df_max['gumbel'] = df_max['logpearson3'].fillna(df_max['gumbel'])
-    df = df.drop(columns=['logpearson3'])
+    df_max = df_max.drop(columns=['logpearson3'])
     df_max['gumbel'] = df_max['gumbel'] * 1.5 + 50
 
     # Now open daily zarr and get median
@@ -678,10 +679,12 @@ def get_historical(stream_raster: str,
     else:
         selection = np.arange(date_start, date_start + datetime.timedelta(days=1), dtype='datetime64[h]')
     
-    logging.info("Opening hourly Zarr file")
-    (
-        xr.open_zarr(c.HOURLY_ZARR_URL, storage_options=STORAGE_OPTIONS)
-        .sel(river_id=linknos)
+    logging.info("Opening the Zarr file")
+    ds = xr.open_zarr(c.DAILY_ZARR_URL, storage_options=STORAGE_OPTIONS)
+    existing = set(ds['river_id'].values)
+    linknos = [linkno for linkno in linknos if linkno in existing]
+    (  
+        ds.sel(river_id=linknos)
         .sel(time=selection, method='nearest')
         ['Q']
         .max(dim='time')
@@ -802,3 +805,8 @@ def remove_oceans(raster_file: str, oceans_file: str) -> None:
     oceans_ds = None
 
     return
+
+def exit_handler():
+    S3.close()
+
+atexit.register(exit_handler)
