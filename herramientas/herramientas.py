@@ -595,7 +595,7 @@ def get_base_max(stream_raster: str,
     base_max_file = os.path.abspath(base_max_file)
 
     # Open the return period zarr
-    # Select return period 100
+    # Select return period 2
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with xr.open_zarr(c.RETURN_PERIODS_ZARR_URL, storage_options=STORAGE_OPTIONS) as ds:
@@ -603,29 +603,19 @@ def get_base_max(stream_raster: str,
             existing = set(ds['river_id'].values)
             linknos = [r for r in linknos if r in existing]
 
-            df_max = (
-                ds.sel(river_id=linknos, return_period=100)
+            df = (
+                ds.sel(river_id=linknos, return_period=2)
                 .to_dataframe()
                 .drop(columns='return_period')
             )
 
-    # Adjust the rp100 to be a little bigger
-    df_max['gumbel'] = df_max['logpearson3'].fillna(df_max['gumbel'])
-    df_max = df_max.drop(columns=['logpearson3'])
-    df_max['gumbel'] = df_max['gumbel'] * 1.5 + 50
+    df['gumbel'] = df['logpearson3'].fillna(df['gumbel'])
+    df['max_simulated'] *= 1.5
+    df = df.drop(columns=['logpearson3'])
 
-    # Now open daily zarr and get median
-    df_base = (
-        xr.open_zarr(c.DAILY_ZARR_URL, storage_options=STORAGE_OPTIONS)
-        .sel(river_id=linknos)
-        .median(dim='time')
-        .to_dataframe()
-    )
-
-    # Merge and save csv
+    # Save csv
     (
-        df_base.merge(df_max, on='river_id')
-        .rename(columns={'Q':'median', 'gumbel':'max'})
+        df.rename(columns={'gumbel':'baseflow', 'max_simulated':'max'})
         .round(2)
         .to_csv(base_max_file)
     )
@@ -653,7 +643,6 @@ def get_return_period(stream_raster: str,
     df = (
         df.reset_index()
         .drop(columns='return_period')
-        .rename(columns={'river_id': 'linkno'})
         .round(2)
     )
     df['logpearson3'] = df['logpearson3'].fillna(df[f'gumbel'])
@@ -730,7 +719,7 @@ def create_main_input_file(out_path: str, configs: dict) -> None:
 
         f.write("\n# Parameters - Required\n")
         f.write(f"Flow_File_ID\triver_id\n")
-        f.write(f"Flow_File_BF\tmedian\n")
+        f.write(f"Flow_File_BF\tbaseflow\n")
         f.write(f"Flow_File_QMax\tmax\n")
         f.write(f"Spatial_Units\tdeg\n")
 
